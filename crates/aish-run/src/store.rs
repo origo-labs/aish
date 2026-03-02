@@ -1,9 +1,11 @@
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, SystemTime};
 use time::OffsetDateTime;
-use uuid::Uuid;
+
+static RUN_COUNTER: AtomicU32 = AtomicU32::new(0);
 
 #[derive(Debug, Clone)]
 pub struct RunPaths {
@@ -32,7 +34,7 @@ pub fn prepare_run_dir(root: &Path, now: OffsetDateTime) -> io::Result<RunPaths>
         ))
         .unwrap_or_else(|_| "unknown-time".to_string());
 
-    let run_id = format!("{}_{}", stamp, Uuid::new_v4());
+    let run_id = format!("{}_{}", stamp, short_run_suffix(now));
     let runs_dir = root.join("runs").join(date);
     let run_dir = runs_dir.join(run_id);
 
@@ -52,6 +54,24 @@ pub fn prepare_run_dir(root: &Path, now: OffsetDateTime) -> io::Result<RunPaths>
         relevant_path,
         last_link,
     })
+}
+
+fn short_run_suffix(now: OffsetDateTime) -> String {
+    let counter = RUN_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let pid = std::process::id();
+    let seed = format!("{}:{}:{}", now.unix_timestamp_nanos(), pid, counter);
+    let hash = fnv1a64(seed.as_bytes());
+    format!("{:08x}", hash as u32)
+}
+
+fn fnv1a64(bytes: &[u8]) -> u64 {
+    // 64-bit FNV-1a hash.
+    let mut hash = 0xcbf29ce484222325_u64;
+    for &b in bytes {
+        hash ^= u64::from(b);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    hash
 }
 
 pub fn update_last_symlink(last_link: &Path, run_dir: &Path) -> io::Result<()> {

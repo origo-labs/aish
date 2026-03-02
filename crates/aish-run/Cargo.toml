@@ -14,4 +14,3 @@ time = { version = "0.3.37", features = ["formatting", "macros", "parsing", "ser
 toml = "0.8.20"
 tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
-uuid = { version = "1.14.0", features = ["v4", "serde"] }
