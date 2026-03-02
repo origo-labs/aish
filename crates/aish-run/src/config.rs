@@ -6,8 +6,16 @@ pub struct StoreConfig {
 }
 
 #[derive(Debug, Clone)]
+pub struct OutputConfig {
+    pub max_excerpt_lines: usize,
+    pub max_digest_lines: usize,
+    pub show_log_path: bool,
+}
+
+#[derive(Debug, Clone)]
 pub struct AppConfig {
     pub store: StoreConfig,
+    pub output: OutputConfig,
 }
 
 impl AppConfig {
@@ -19,6 +27,11 @@ impl AppConfig {
 
         Self {
             store: StoreConfig { root },
+            output: OutputConfig {
+                max_excerpt_lines: 200,
+                max_digest_lines: 3,
+                show_log_path: true,
+            },
         }
     }
 }

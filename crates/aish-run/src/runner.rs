@@ -35,7 +35,7 @@ pub fn run(args: &Cli) -> Result<i32, String> {
         .log_dir
         .as_ref()
         .map(PathBuf::from)
-        .unwrap_or(base_config.store.root);
+        .unwrap_or(base_config.store.root.clone());
 
     fs::create_dir_all(&root).map_err(|e| format!("failed to create store root: {e}"))?;
     let run_paths = store::prepare_run_dir(&root, started)
@@ -56,15 +56,14 @@ pub fn run(args: &Cli) -> Result<i32, String> {
     fs::write(&run_paths.digest_path, &digest)
         .map_err(|e| format!("failed to write digest: {e}"))?;
 
-    if !command_outcome.success {
-        let failure_note = format!(
-            "command failed ({})\nfull log: {}\n",
-            command_outcome.status_text,
-            run_paths.log_path.display()
-        );
-        fs::write(&run_paths.relevant_path, failure_note)
+    let excerpt = if !command_outcome.success {
+        let failure_note = format!("command failed ({})", command_outcome.status_text);
+        fs::write(&run_paths.relevant_path, &failure_note)
             .map_err(|e| format!("failed to write relevant excerpt: {e}"))?;
-    }
+        Some(failure_note)
+    } else {
+        None
+    };
 
     let id = run_paths
         .run_dir
@@ -98,13 +97,16 @@ pub fn run(args: &Cli) -> Result<i32, String> {
     store::update_last_symlink(&run_paths.last_link, &run_paths.run_dir)
         .map_err(|e| format!("failed to update last symlink: {e}"))?;
 
-    if command_outcome.success {
-        println!("\n{digest}");
-        println!("full log: {}", run_paths.log_path.display());
-    } else {
-        println!("\n{digest}");
-        println!("full log: {}", run_paths.log_path.display());
-    }
+    render::render_summary(render::RenderContext {
+        show_mode: args.show.clone(),
+        success: command_outcome.success,
+        digest: &digest,
+        excerpt: excerpt.as_deref(),
+        log_path: &run_paths.log_path,
+        max_excerpt_lines: base_config.output.max_excerpt_lines,
+        max_digest_lines: base_config.output.max_digest_lines,
+        show_log_path: base_config.output.show_log_path,
+    });
 
     Ok(command_outcome.exit_code)
 }
