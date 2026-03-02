@@ -1,0 +1,18 @@
+[store]
+root = "~/.local/state/aish"
+keep_days = 14
+max_total_mb = 2000
+
+[output]
+mode = "auto"
+max_excerpt_lines = 200
+max_digest_lines = 3
+show_log_path = true
+
+[wrap]
+default = "off"
+commands = ["pytest", "jest", "gradle", "mvn", "go", "cargo", "npm", "pnpm", "yarn"]
+skip_commands = ["cat", "less", "more", "man", "ssh", "vim", "nano", "top", "htop"]
+
+[detectors]
+enabled = ["generic", "pytest", "jest", "gradle", "maven"]
