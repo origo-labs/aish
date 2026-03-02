@@ -58,6 +58,7 @@ pub fn run(args: &Cli) -> Result<i32, String> {
         &run_paths.log_path,
         command_outcome.exit_code,
         &app_config.detectors.enabled,
+        &args.command,
     );
     let mut digest =
         render::build_digest(command_outcome.success, duration_ms, &args.command, ended);

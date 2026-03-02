@@ -1,21 +1,7 @@
 use regex::Regex;
+use std::borrow::Cow;
 use std::fs;
 use std::path::Path;
-
-pub trait Detector {
-    fn name(&self) -> &'static str;
-    fn observe_line(&mut self, line: &str);
-    fn finalize(&self, exit_code: i32) -> DetectorResult;
-}
-
-#[derive(Debug, Clone)]
-pub struct DetectorResult {
-    pub detector: &'static str,
-    pub tool: Option<String>,
-    pub summary: Vec<String>,
-    pub relevant: Vec<String>,
-    pub confidence: u8,
-}
 
 #[derive(Debug, Clone)]
 pub struct AnalysisResult {
@@ -23,10 +9,32 @@ pub struct AnalysisResult {
     pub excerpt: Option<String>,
 }
 
+#[derive(Debug, Clone)]
+struct RuleResult {
+    detector: &'static str,
+    tool: Option<&'static str>,
+    confidence: u8,
+    summary: Vec<String>,
+    excerpt_lines: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ToolRule {
+    id: &'static str,
+    tool: Option<&'static str>,
+    commands: &'static [&'static str],
+    markers: &'static [&'static str],
+    summary_markers: &'static [&'static str],
+    excerpt_start: &'static [&'static str],
+    excerpt_end: &'static [&'static str],
+    base_confidence: u8,
+}
+
 pub fn analyze_log(
     log_path: &Path,
     exit_code: i32,
     enabled_detectors: &[String],
+    command: &[String],
 ) -> AnalysisResult {
     let log_bytes = match fs::read(log_path) {
         Ok(bytes) => bytes,
@@ -38,36 +46,18 @@ pub fn analyze_log(
         }
     };
 
-    let text = String::from_utf8_lossy(&log_bytes);
-    let lines: Vec<&str> = text.lines().collect();
+    let raw_text = String::from_utf8_lossy(&log_bytes);
+    let parsed_text = strip_ansi(&raw_text);
+    let lines: Vec<&str> = parsed_text.lines().collect();
+    let cmd_name = command_basename(command).to_ascii_lowercase();
 
-    let mut detectors: Vec<Box<dyn Detector>> = Vec::new();
-    if detector_enabled("pytest", enabled_detectors) {
-        detectors.push(Box::new(PytestDetector::new()));
-    }
-    if detector_enabled("jest", enabled_detectors) {
-        detectors.push(Box::new(JestDetector::new()));
-    }
-    if detector_enabled("gradle", enabled_detectors) {
-        detectors.push(Box::new(GradleDetector::new()));
-    }
-    if detector_enabled("maven", enabled_detectors) {
-        detectors.push(Box::new(MavenDetector::new()));
-    }
-    if detector_enabled("generic", enabled_detectors) {
-        detectors.push(Box::new(GenericErrorDetector::new()));
-    }
-
-    for line in &lines {
-        for detector in &mut detectors {
-            detector.observe_line(line);
+    let mut best: Option<RuleResult> = None;
+    for &rule in tool_rules() {
+        if !detector_enabled(rule.id, enabled_detectors) {
+            continue;
         }
-    }
-
-    let mut best: Option<DetectorResult> = None;
-    for detector in detectors {
-        let result = detector.finalize(exit_code);
-        if should_replace_best(best.as_ref(), &result) {
+        let result = evaluate_rule(rule, &cmd_name, &lines, exit_code);
+        if should_replace(best.as_ref(), &result) {
             best = Some(result);
         }
     }
@@ -77,13 +67,14 @@ pub fn analyze_log(
         .map(|r| {
             let mut lines = r.summary.clone();
             lines.push(format!("detector: {}", r.detector));
-            if let Some(tool) = &r.tool {
+            if let Some(tool) = r.tool {
                 lines.push(format!("tool: {tool}"));
             }
             lines
         })
         .unwrap_or_default();
-    let excerpt = best.and_then(|r| (!r.relevant.is_empty()).then_some(r.relevant.join("\n")));
+    let excerpt =
+        best.and_then(|r| (!r.excerpt_lines.is_empty()).then_some(r.excerpt_lines.join("\n")));
 
     AnalysisResult {
         summary_lines,
@@ -91,38 +82,349 @@ pub fn analyze_log(
     }
 }
 
-fn detector_enabled(name: &str, enabled: &[String]) -> bool {
+fn evaluate_rule(rule: ToolRule, cmd_name: &str, lines: &[&str], exit_code: i32) -> RuleResult {
+    let command_match = matches_command(rule.commands, cmd_name);
+    let marker_hits = count_marker_hits(lines, rule.markers);
+
+    let mut confidence: i32 = i32::from(rule.base_confidence);
+    if command_match {
+        confidence += 20;
+    }
+    confidence += (marker_hits.min(6) as i32) * 6;
+    if exit_code == 0 {
+        confidence -= 20;
+    }
+    if !command_match && marker_hits == 0 {
+        confidence = 0;
+    }
+
+    let summary = build_summary(rule, lines, exit_code, marker_hits);
+    let excerpt_lines = build_excerpt(rule, lines, exit_code, command_match);
+
+    RuleResult {
+        detector: rule.id,
+        tool: rule.tool,
+        confidence: confidence.clamp(0, 100) as u8,
+        summary,
+        excerpt_lines,
+    }
+}
+
+fn build_summary(
+    rule: ToolRule,
+    lines: &[&str],
+    exit_code: i32,
+    marker_hits: usize,
+) -> Vec<String> {
+    let mut summary = Vec::new();
+    if exit_code == 0 {
+        summary.push("command completed successfully".to_string());
+        return summary;
+    }
+
+    summary.push(format!("command failed with exit code {exit_code}"));
+    if marker_hits > 0 {
+        summary.push(format!("matched {marker_hits} {} markers", rule.id));
+    }
+
+    if let Some(line) = find_last_line_with_any(lines, rule.summary_markers) {
+        summary.push(line.trim().to_string());
+    }
+
+    summary
+}
+
+fn build_excerpt(
+    rule: ToolRule,
+    lines: &[&str],
+    exit_code: i32,
+    command_match: bool,
+) -> Vec<String> {
+    if lines.is_empty() || exit_code == 0 {
+        return Vec::new();
+    }
+
+    let start = find_first_line_with_any(lines, rule.excerpt_start)
+        .or_else(|| find_first_line_with_any(lines, rule.markers));
+
+    if let Some(start_idx) = start {
+        let end = find_end_index(lines, start_idx, rule.excerpt_end)
+            .unwrap_or_else(|| usize::min(start_idx + 120, lines.len()));
+        return lines[start_idx..end]
+            .iter()
+            .map(|s| (*s).to_string())
+            .collect();
+    }
+
+    if command_match {
+        let start_idx = lines.len().saturating_sub(80);
+        return lines[start_idx..]
+            .iter()
+            .map(|s| (*s).to_string())
+            .collect();
+    }
+
+    Vec::new()
+}
+
+fn find_end_index(lines: &[&str], start_idx: usize, markers: &[&str]) -> Option<usize> {
+    if markers.is_empty() {
+        return None;
+    }
+
+    lines
+        .iter()
+        .enumerate()
+        .skip(start_idx + 1)
+        .find(|(_, line)| contains_any(line, markers))
+        .map(|(idx, _)| idx)
+}
+
+fn should_replace(current: Option<&RuleResult>, candidate: &RuleResult) -> bool {
+    match current {
+        None => candidate.confidence > 0,
+        Some(existing) => candidate.confidence > existing.confidence,
+    }
+}
+
+fn detector_enabled(id: &str, enabled: &[String]) -> bool {
     if enabled.is_empty() {
         return true;
     }
-    enabled.iter().any(|item| item == name)
+    enabled.iter().any(|entry| entry == id)
 }
 
-fn should_replace_best(current: Option<&DetectorResult>, candidate: &DetectorResult) -> bool {
-    match current {
-        None => true,
-        Some(cur) => candidate.confidence > cur.confidence,
+fn matches_command(commands: &[&str], cmd_name: &str) -> bool {
+    commands.is_empty() || commands.iter().any(|name| *name == cmd_name)
+}
+
+fn count_marker_hits(lines: &[&str], markers: &[&str]) -> usize {
+    if markers.is_empty() {
+        return 0;
     }
+
+    lines
+        .iter()
+        .filter(|line| contains_any(line, markers))
+        .count()
 }
 
-struct GenericErrorDetector {
-    lines: Vec<String>,
-    first_error_line: Option<usize>,
-    error_hits: usize,
-    strong_markers: Vec<&'static str>,
-    frame_regex: Regex,
+fn find_first_line_with_any(lines: &[&str], markers: &[&str]) -> Option<usize> {
+    if markers.is_empty() {
+        return None;
+    }
+
+    lines.iter().position(|line| contains_any(line, markers))
 }
 
-impl GenericErrorDetector {
-    fn new() -> Self {
-        Self {
-            lines: Vec::new(),
-            first_error_line: None,
-            error_hits: 0,
-            strong_markers: vec![
-                "thread '",
-                "panicked at",
+fn find_last_line_with_any(lines: &[&str], markers: &[&str]) -> Option<String> {
+    if markers.is_empty() {
+        return None;
+    }
+
+    lines
+        .iter()
+        .rev()
+        .find(|line| contains_any(line, markers))
+        .map(|line| (*line).to_string())
+}
+
+fn contains_any(line: &str, markers: &[&str]) -> bool {
+    let lower = line.to_ascii_lowercase();
+    markers.iter().any(|marker| lower.contains(marker))
+}
+
+fn command_basename(command: &[String]) -> &str {
+    command
+        .first()
+        .and_then(|cmd| Path::new(cmd).file_name())
+        .and_then(|f| f.to_str())
+        .unwrap_or("")
+}
+
+fn strip_ansi(input: &str) -> Cow<'_, str> {
+    // Typical CSI ANSI escape sequences; keep parser simple for MVP.
+    let ansi_re = Regex::new(r"\x1B\[[0-9;?]*[ -/]*[@-~]").expect("valid ansi regex");
+    ansi_re.replace_all(input, "")
+}
+
+fn tool_rules() -> &'static [ToolRule] {
+    &[
+        ToolRule {
+            id: "pytest",
+            tool: Some("pytest"),
+            commands: &["pytest"],
+            markers: &["failures", "collected", "short test summary info"],
+            summary_markers: &[" failed", " passed", " skipped", " xfailed", "error"],
+            excerpt_start: &["failures"],
+            excerpt_end: &["short test summary info", "===="],
+            base_confidence: 68,
+        },
+        ToolRule {
+            id: "jest",
+            tool: Some("jest"),
+            commands: &["jest"],
+            markers: &["fail ", "test suites:", "tests:"],
+            summary_markers: &["test suites:", "tests:"],
+            excerpt_start: &["fail "],
+            excerpt_end: &["test suites:"],
+            base_confidence: 68,
+        },
+        ToolRule {
+            id: "vitest",
+            tool: Some("vitest"),
+            commands: &["vitest"],
+            markers: &["failed tests", "test files", "vitest"],
+            summary_markers: &["failed", "passed", "test files"],
+            excerpt_start: &["failed tests", "error"],
+            excerpt_end: &["test files", "duration"],
+            base_confidence: 64,
+        },
+        ToolRule {
+            id: "cargo",
+            tool: Some("cargo"),
+            commands: &["cargo"],
+            markers: &["error:", "test result:", "failures:"],
+            summary_markers: &["test result:", "error:"],
+            excerpt_start: &["error:", "failures:"],
+            excerpt_end: &["test result:", "error: could not compile"],
+            base_confidence: 62,
+        },
+        ToolRule {
+            id: "go",
+            tool: Some("go"),
+            commands: &["go"],
+            markers: &["--- fail:", "fail\t", "panic:", "build failed"],
+            summary_markers: &["fail\t", "ok\t", "?\t"],
+            excerpt_start: &["--- fail:", "panic:"],
+            excerpt_end: &["fail\t", "exit status"],
+            base_confidence: 62,
+        },
+        ToolRule {
+            id: "tsc",
+            tool: Some("typescript"),
+            commands: &["tsc"],
+            markers: &["error ts", "found ", "errors"],
+            summary_markers: &["error ts", "found", "errors"],
+            excerpt_start: &["error ts"],
+            excerpt_end: &["found", "errors"],
+            base_confidence: 60,
+        },
+        ToolRule {
+            id: "eslint",
+            tool: Some("eslint"),
+            commands: &["eslint"],
+            markers: &["problems (", "error", "warning"],
+            summary_markers: &["problems (", "✖"],
+            excerpt_start: &["error", "warning"],
+            excerpt_end: &["problems (", "✖"],
+            base_confidence: 58,
+        },
+        ToolRule {
+            id: "ruff",
+            tool: Some("ruff"),
+            commands: &["ruff"],
+            markers: &["found", "error", "would fix"],
+            summary_markers: &["found", "would fix", "all checks passed"],
+            excerpt_start: &["error", "found"],
+            excerpt_end: &["found", "would fix"],
+            base_confidence: 58,
+        },
+        ToolRule {
+            id: "mypy",
+            tool: Some("mypy"),
+            commands: &["mypy"],
+            markers: &[": error:", "found ", "error in"],
+            summary_markers: &["found ", "success: no issues found"],
+            excerpt_start: &[": error:"],
+            excerpt_end: &["found", "error in"],
+            base_confidence: 58,
+        },
+        ToolRule {
+            id: "maven",
+            tool: Some("maven"),
+            commands: &["mvn"],
+            markers: &["[error]", "build failure", "failed to execute goal"],
+            summary_markers: &["build failure", "[error]"],
+            excerpt_start: &["[error]"],
+            excerpt_end: &["[help", "[info]"],
+            base_confidence: 66,
+        },
+        ToolRule {
+            id: "gradle",
+            tool: Some("gradle"),
+            commands: &["gradle"],
+            markers: &[
+                "build failed",
+                "failure: build failed with an exception",
+                "what went wrong",
+            ],
+            summary_markers: &["build failed", "what went wrong"],
+            excerpt_start: &["failure: build failed with an exception", "what went wrong"],
+            excerpt_end: &["* try:", "build failed"],
+            base_confidence: 66,
+        },
+        ToolRule {
+            id: "dotnet",
+            tool: Some("dotnet"),
+            commands: &["dotnet"],
+            markers: &["build failed", "test run failed", "error cs", "failed!"],
+            summary_markers: &["build failed", "test run failed", "failed!"],
+            excerpt_start: &["error cs", "failed!", "test run failed"],
+            excerpt_end: &["build failed", "total tests:"],
+            base_confidence: 62,
+        },
+        ToolRule {
+            id: "cmake",
+            tool: Some("cmake/ctest"),
+            commands: &["cmake", "ctest"],
+            markers: &[
+                "cmake error",
+                "the following tests failed:",
+                "errors occurred",
+            ],
+            summary_markers: &["the following tests failed:", "errors occurred"],
+            excerpt_start: &["cmake error", "the following tests failed:"],
+            excerpt_end: &["-- configuring incomplete", "errors occurred"],
+            base_confidence: 56,
+        },
+        ToolRule {
+            id: "terraform",
+            tool: Some("terraform"),
+            commands: &["terraform"],
+            markers: &["error:", "failed", "planning failed", "apply complete!"],
+            summary_markers: &["error:", "planning failed", "apply complete!"],
+            excerpt_start: &["error:"],
+            excerpt_end: &["terraform used", "╵", "exit status"],
+            base_confidence: 56,
+        },
+        ToolRule {
+            id: "docker",
+            tool: Some("docker"),
+            commands: &["docker", "docker-compose", "compose"],
+            markers: &["error", "failed to", "executor failed", "service"],
+            summary_markers: &["error", "failed to"],
+            excerpt_start: &["error", "failed to"],
+            excerpt_end: &["executor failed", "service"],
+            base_confidence: 55,
+        },
+        ToolRule {
+            id: "kubectl",
+            tool: Some("kubectl"),
+            commands: &["kubectl"],
+            markers: &["error from server", "unable to", "forbidden", "not found"],
+            summary_markers: &["error from server", "unable to", "forbidden", "not found"],
+            excerpt_start: &["error from server", "unable to", "forbidden"],
+            excerpt_end: &[],
+            base_confidence: 55,
+        },
+        ToolRule {
+            id: "generic",
+            tool: None,
+            commands: &[],
+            markers: &[
                 "panic:",
+                "panicked at",
                 "traceback (most recent call last):",
                 "exception in thread",
                 "caused by:",
@@ -131,354 +433,49 @@ impl GenericErrorDetector {
                 "killed",
                 "error:",
             ],
-            frame_regex: Regex::new(r"([A-Za-z0-9_./\\-]+):(\\d+)").expect("valid frame regex"),
-        }
+            summary_markers: &["error:", "exception", "panic", "traceback"],
+            excerpt_start: &[
+                "panic:",
+                "traceback (most recent call last):",
+                "exception",
+                "error:",
+            ],
+            excerpt_end: &[],
+            base_confidence: 30,
+        },
+    ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn strips_ansi_sequences() {
+        let input = "\u{1b}[31merror\u{1b}[0m";
+        assert_eq!(strip_ansi(input), "error");
     }
 
-    fn is_error_marker(&self, line: &str) -> bool {
-        let lower = line.to_ascii_lowercase();
-        self.strong_markers
+    #[test]
+    fn command_bias_prefers_pytest_over_generic() {
+        let lines = vec![
+            "=========================== FAILURES ===========================",
+            "FAILED test_x.py::test_nope - AssertionError",
+        ];
+        let pytest_rule = tool_rules()
             .iter()
-            .any(|marker| lower.contains(marker))
-    }
-
-    fn build_excerpt(&self, exit_code: i32) -> Vec<String> {
-        if self.lines.is_empty() {
-            return Vec::new();
-        }
-
-        let mut excerpt = Vec::new();
-
-        if let Some(err_idx) = self.first_error_line {
-            let start = err_idx.saturating_sub(25);
-            let end = usize::min(err_idx + 80, self.lines.len());
-            excerpt.extend(self.lines[start..end].iter().cloned());
-        } else if exit_code != 0 {
-            let start = self.lines.len().saturating_sub(80);
-            excerpt.extend(self.lines[start..].iter().cloned());
-        }
-
-        let mut frames = Vec::new();
-        for line in &self.lines {
-            if self.frame_regex.is_match(line) {
-                frames.push(line.clone());
-            }
-        }
-
-        if !frames.is_empty() {
-            excerpt.push(String::new());
-            excerpt.push("stack-like frames:".to_string());
-            for frame in frames.iter().take(20) {
-                excerpt.push(frame.clone());
-            }
-        }
-
-        excerpt
-    }
-}
-
-impl Detector for GenericErrorDetector {
-    fn name(&self) -> &'static str {
-        "generic"
-    }
-
-    fn observe_line(&mut self, line: &str) {
-        let idx = self.lines.len();
-        self.lines.push(line.to_string());
-
-        if self.is_error_marker(line) {
-            self.error_hits += 1;
-            if self.first_error_line.is_none() {
-                self.first_error_line = Some(idx);
-            }
-        }
-    }
-
-    fn finalize(&self, exit_code: i32) -> DetectorResult {
-        let mut summary = Vec::new();
-        if exit_code == 0 {
-            summary.push("command completed successfully".to_string());
-        } else {
-            summary.push(format!("command failed with exit code {exit_code}"));
-            summary.push(format!("detected {} error markers", self.error_hits));
-        }
-
-        let confidence = if self.first_error_line.is_some() {
-            60
-        } else if exit_code != 0 {
-            30
-        } else {
-            5
-        };
-
-        DetectorResult {
-            detector: self.name(),
-            tool: None,
-            summary,
-            relevant: self.build_excerpt(exit_code),
-            confidence,
-        }
-    }
-}
-
-struct PytestDetector {
-    lines: Vec<String>,
-}
-
-impl PytestDetector {
-    fn new() -> Self {
-        Self { lines: Vec::new() }
-    }
-}
-
-impl Detector for PytestDetector {
-    fn name(&self) -> &'static str {
-        "pytest"
-    }
-
-    fn observe_line(&mut self, line: &str) {
-        self.lines.push(line.to_string());
-    }
-
-    fn finalize(&self, exit_code: i32) -> DetectorResult {
-        let mut summary = Vec::new();
-        let mut relevant = Vec::new();
-        let mut confidence = 0;
-
-        let failures_idx = self.lines.iter().position(|l| l.contains("FAILURES"));
-        let summary_line = self
-            .lines
+            .find(|r| r.id == "pytest")
+            .copied()
+            .expect("pytest rule");
+        let generic_rule = tool_rules()
             .iter()
-            .rev()
-            .find(|l| l.contains("failed") || l.contains("passed") || l.contains("skipped"));
+            .find(|r| r.id == "generic")
+            .copied()
+            .expect("generic rule");
 
-        if failures_idx.is_some()
-            || self
-                .lines
-                .iter()
-                .any(|l| l.contains("collected") && l.contains("items"))
-        {
-            confidence = if failures_idx.is_some() { 90 } else { 40 };
-            summary.push(format!("command failed with exit code {exit_code}"));
-            if let Some(line) = summary_line {
-                summary.push(line.trim().to_string());
-            }
-        }
+        let pytest = evaluate_rule(pytest_rule, "pytest", &lines, 1);
+        let generic = evaluate_rule(generic_rule, "pytest", &lines, 1);
 
-        if let Some(idx) = failures_idx {
-            let end = self
-                .lines
-                .iter()
-                .skip(idx + 1)
-                .position(|l| l.contains("short test summary info") || l.contains("===="))
-                .map(|offset| idx + 1 + offset)
-                .unwrap_or_else(|| usize::min(idx + 120, self.lines.len()));
-            let bounded_end = usize::min(end, self.lines.len());
-            relevant.extend(self.lines[idx..bounded_end].iter().cloned());
-        }
-
-        DetectorResult {
-            detector: self.name(),
-            tool: Some("pytest".to_string()),
-            summary,
-            relevant,
-            confidence,
-        }
-    }
-}
-
-struct JestDetector {
-    lines: Vec<String>,
-}
-
-impl JestDetector {
-    fn new() -> Self {
-        Self { lines: Vec::new() }
-    }
-}
-
-impl Detector for JestDetector {
-    fn name(&self) -> &'static str {
-        "jest"
-    }
-
-    fn observe_line(&mut self, line: &str) {
-        self.lines.push(line.to_string());
-    }
-
-    fn finalize(&self, exit_code: i32) -> DetectorResult {
-        let mut summary = Vec::new();
-        let mut relevant = Vec::new();
-        let mut confidence = 0;
-
-        let first_fail = self
-            .lines
-            .iter()
-            .position(|l| l.starts_with("FAIL ") || l.trim_start().starts_with("FAIL "));
-        let suites = self.lines.iter().rev().find(|l| l.contains("Test Suites:"));
-        let tests = self.lines.iter().rev().find(|l| l.contains("Tests:"));
-
-        if first_fail.is_some() || suites.is_some() {
-            confidence = if first_fail.is_some() { 88 } else { 35 };
-            summary.push(format!("command failed with exit code {exit_code}"));
-            if let Some(s) = suites {
-                summary.push(s.trim().to_string());
-            }
-            if let Some(t) = tests {
-                summary.push(t.trim().to_string());
-            }
-        }
-
-        if let Some(idx) = first_fail {
-            let end = self
-                .lines
-                .iter()
-                .skip(idx + 1)
-                .position(|l| l.contains("Test Suites:"))
-                .map(|offset| idx + 1 + offset + 1)
-                .unwrap_or_else(|| usize::min(idx + 120, self.lines.len()));
-            relevant.extend(
-                self.lines[idx..usize::min(end, self.lines.len())]
-                    .iter()
-                    .cloned(),
-            );
-        }
-
-        DetectorResult {
-            detector: self.name(),
-            tool: Some("jest".to_string()),
-            summary,
-            relevant,
-            confidence,
-        }
-    }
-}
-
-struct GradleDetector {
-    lines: Vec<String>,
-}
-
-impl GradleDetector {
-    fn new() -> Self {
-        Self { lines: Vec::new() }
-    }
-}
-
-impl Detector for GradleDetector {
-    fn name(&self) -> &'static str {
-        "gradle"
-    }
-
-    fn observe_line(&mut self, line: &str) {
-        self.lines.push(line.to_string());
-    }
-
-    fn finalize(&self, exit_code: i32) -> DetectorResult {
-        let mut summary = Vec::new();
-        let mut relevant = Vec::new();
-        let failure_idx = self
-            .lines
-            .iter()
-            .position(|l| l.contains("FAILURE: Build failed with an exception."));
-        let build_failed = self.lines.iter().any(|l| l.contains("BUILD FAILED"));
-
-        let confidence = if failure_idx.is_some() {
-            86
-        } else if build_failed {
-            50
-        } else {
-            0
-        };
-
-        if confidence > 0 {
-            summary.push(format!("command failed with exit code {exit_code}"));
-            summary.push("gradle build failure detected".to_string());
-        }
-
-        if let Some(idx) = failure_idx {
-            let end = self
-                .lines
-                .iter()
-                .skip(idx + 1)
-                .position(|l| l.contains("* Try:") || l.contains("BUILD FAILED"))
-                .map(|offset| idx + 1 + offset + 1)
-                .unwrap_or_else(|| usize::min(idx + 120, self.lines.len()));
-            relevant.extend(
-                self.lines[idx..usize::min(end, self.lines.len())]
-                    .iter()
-                    .cloned(),
-            );
-        }
-
-        DetectorResult {
-            detector: self.name(),
-            tool: Some("gradle".to_string()),
-            summary,
-            relevant,
-            confidence,
-        }
-    }
-}
-
-struct MavenDetector {
-    lines: Vec<String>,
-}
-
-impl MavenDetector {
-    fn new() -> Self {
-        Self { lines: Vec::new() }
-    }
-}
-
-impl Detector for MavenDetector {
-    fn name(&self) -> &'static str {
-        "maven"
-    }
-
-    fn observe_line(&mut self, line: &str) {
-        self.lines.push(line.to_string());
-    }
-
-    fn finalize(&self, exit_code: i32) -> DetectorResult {
-        let mut summary = Vec::new();
-        let mut relevant = Vec::new();
-        let first_error = self.lines.iter().position(|l| l.starts_with("[ERROR]"));
-        let build_failure = self.lines.iter().any(|l| l.contains("BUILD FAILURE"));
-
-        let confidence = if first_error.is_some() {
-            84
-        } else if build_failure {
-            45
-        } else {
-            0
-        };
-
-        if confidence > 0 {
-            summary.push(format!("command failed with exit code {exit_code}"));
-            summary.push("maven build failure detected".to_string());
-        }
-
-        if let Some(idx) = first_error {
-            let end = self
-                .lines
-                .iter()
-                .skip(idx + 1)
-                .position(|l| !l.starts_with("[ERROR]") && !l.trim().is_empty())
-                .map(|offset| idx + 1 + offset)
-                .unwrap_or_else(|| usize::min(idx + 60, self.lines.len()));
-            relevant.extend(
-                self.lines[idx..usize::min(end, self.lines.len())]
-                    .iter()
-                    .cloned(),
-            );
-        }
-
-        DetectorResult {
-            detector: self.name(),
-            tool: Some("maven".to_string()),
-            summary,
-            relevant,
-            confidence,
-        }
+        assert!(pytest.confidence > generic.confidence);
     }
 }
