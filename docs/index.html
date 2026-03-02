@@ -1,0 +1,288 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>AISH - Shell Superpowers Without the Noise</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --paper: #fff7e8;
+      --ink: #202328;
+      --hot: #ff5b2e;
+      --sun: #ffd166;
+      --mint: #2ec4b6;
+      --ocean: #157a8a;
+      --line: #202328;
+      --card: rgba(255, 255, 255, 0.8);
+      --shadow: 0 14px 0 #202328;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      font-family: "Space Grotesk", sans-serif;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at 12% 18%, rgba(255, 209, 102, 0.55), transparent 30%),
+        radial-gradient(circle at 86% 12%, rgba(46, 196, 182, 0.4), transparent 36%),
+        linear-gradient(160deg, #fff7e8 0%, #fff2d6 100%);
+      min-height: 100vh;
+      overflow-x: hidden;
+    }
+
+    .noise {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      opacity: 0.15;
+      background-image: radial-gradient(#000 0.4px, transparent 0.4px);
+      background-size: 4px 4px;
+    }
+
+    .wrap {
+      width: min(1120px, 92vw);
+      margin: 0 auto;
+      padding: 2rem 0 4rem;
+    }
+
+    .topbar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 1rem;
+      margin-bottom: 2rem;
+      animation: rise .7s ease both;
+    }
+
+    .brand {
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      font-size: 1.1rem;
+      padding: .5rem .75rem;
+      border: 2px solid var(--line);
+      background: #fff;
+      box-shadow: 4px 4px 0 var(--line);
+      transform: rotate(-1deg);
+    }
+
+    .pill {
+      font-family: "IBM Plex Mono", monospace;
+      font-size: .8rem;
+      border: 2px solid var(--line);
+      background: var(--sun);
+      padding: .45rem .65rem;
+      box-shadow: 3px 3px 0 var(--line);
+    }
+
+    .hero {
+      display: grid;
+      grid-template-columns: 1.05fr .95fr;
+      gap: 2rem;
+      align-items: center;
+      margin-bottom: 3rem;
+    }
+
+    h1 {
+      font-size: clamp(2rem, 5vw, 4.1rem);
+      line-height: 0.95;
+      margin: 0 0 1rem;
+      letter-spacing: -0.03em;
+    }
+
+    .highlight {
+      background: linear-gradient(110deg, var(--ocean), var(--mint) 45%, var(--hot));
+      -webkit-background-clip: text;
+      background-clip: text;
+      -webkit-text-fill-color: transparent;
+      color: transparent;
+    }
+
+    .lede {
+      max-width: 56ch;
+      font-size: 1.07rem;
+      line-height: 1.6;
+      margin-bottom: 1.4rem;
+    }
+
+    .cta-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: .8rem;
+    }
+
+    .btn {
+      border: 2px solid var(--line);
+      background: #fff;
+      color: var(--ink);
+      padding: .8rem 1rem;
+      font-weight: 700;
+      text-decoration: none;
+      box-shadow: 5px 5px 0 var(--line);
+      transition: transform .15s ease, box-shadow .15s ease;
+    }
+
+    .btn:hover {
+      transform: translate(-2px, -2px);
+      box-shadow: 7px 7px 0 var(--line);
+    }
+
+    .btn.hot {
+      background: var(--hot);
+      color: #fff;
+    }
+
+    .terminal {
+      border: 2px solid var(--line);
+      border-radius: 20px;
+      padding: 1rem;
+      background: linear-gradient(180deg, #f4fffd 0%, #f6f9ff 100%);
+      box-shadow: var(--shadow);
+      transform: rotate(1deg);
+      animation: rise .8s .15s ease both;
+    }
+
+    .term-head {
+      display: flex;
+      gap: .4rem;
+      margin-bottom: .8rem;
+    }
+
+    .dot { width: 10px; height: 10px; border-radius: 50%; border: 2px solid var(--line); }
+    .dot:nth-child(1) { background: #ff8fa3; }
+    .dot:nth-child(2) { background: var(--sun); }
+    .dot:nth-child(3) { background: var(--mint); }
+
+    pre {
+      margin: 0;
+      white-space: pre-wrap;
+      font-family: "IBM Plex Mono", monospace;
+      font-size: .88rem;
+      line-height: 1.55;
+    }
+
+    .cmd { color: var(--ocean); font-weight: 500; }
+    .ok { color: #1d7f62; }
+    .fail { color: #b42318; }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(12, 1fr);
+      gap: 1rem;
+      margin-top: 1rem;
+    }
+
+    .card {
+      border: 2px solid var(--line);
+      background: var(--card);
+      backdrop-filter: blur(4px);
+      padding: 1rem;
+      box-shadow: 6px 6px 0 var(--line);
+      opacity: 0;
+      transform: translateY(16px);
+      animation: rise .6s ease forwards;
+    }
+
+    .card h3 { margin: .1rem 0 .5rem; font-size: 1.05rem; }
+    .card p { margin: 0; line-height: 1.5; font-size: .96rem; }
+
+    .card:nth-child(1) { grid-column: span 4; background: #fff; animation-delay: .1s; }
+    .card:nth-child(2) { grid-column: span 5; background: #e9fbf8; animation-delay: .2s; }
+    .card:nth-child(3) { grid-column: span 3; background: #fff7cf; animation-delay: .3s; }
+    .card:nth-child(4) { grid-column: span 7; background: #fff; animation-delay: .35s; }
+    .card:nth-child(5) { grid-column: span 5; background: #ffe7dd; animation-delay: .45s; }
+
+    .banner {
+      margin-top: 2rem;
+      border: 2px dashed var(--line);
+      padding: 1rem;
+      background: rgba(255,255,255,.65);
+      font-family: "IBM Plex Mono", monospace;
+      font-size: .9rem;
+      animation: rise .6s .55s both;
+    }
+
+    @keyframes rise {
+      from { opacity: 0; transform: translateY(16px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    @media (max-width: 960px) {
+      .hero { grid-template-columns: 1fr; }
+      .terminal { transform: none; }
+      .card:nth-child(n) { grid-column: span 12; }
+    }
+  </style>
+</head>
+<body>
+  <div class="noise"></div>
+  <main class="wrap">
+    <header class="topbar">
+      <div class="brand">AISH</div>
+      <div class="pill">Ship faster from your shell</div>
+    </header>
+
+    <section class="hero">
+      <div>
+        <h1>
+          Keep your shell.<br />
+          Get <span class="highlight">signal, not noise</span>.
+        </h1>
+        <p class="lede">
+          AISH wraps commands in a PTY, logs everything, and surfaces the exact failure region that matters.
+          You still run normal tools. AISH just makes the output usable when it counts.
+        </p>
+        <div class="cta-row">
+          <a class="btn hot" href="#">Get Started</a>
+          <a class="btn" href="#">Read Docs</a>
+        </div>
+      </div>
+
+      <aside class="terminal" aria-label="Command output preview">
+        <div class="term-head"><span class="dot"></span><span class="dot"></span><span class="dot"></span></div>
+<pre><span class="cmd">$ ai pytest -q</span>
+<span class="fail">[FAIL]</span> 2026-03-02T12:39:43Z | 217 ms | pytest -q
+
+=========================== FAILURES ===========================
+E   AssertionError: expected 4, got 3
+
+full log: ~/.local/state/aish/last/pty.log
+
+<span class="cmd">$ ai cargo test</span>
+<span class="ok">[OK]</span> 2026-03-02T12:45:33Z | 10 ms | cargo test</pre>
+      </aside>
+    </section>
+
+    <section class="grid" aria-label="Feature highlights">
+      <article class="card">
+        <h3>PTY-True Execution</h3>
+        <p>Progress bars, colors, and interactive behavior stay intact because commands run in a real PTY.</p>
+      </article>
+      <article class="card">
+        <h3>Detector-Aware Excerpts</h3>
+        <p>Pytest, Jest, Vitest, Cargo, Go, Terraform, Docker, Kubectl, and more. Tool-specific patterns win over generic fallbacks.</p>
+      </article>
+      <article class="card">
+        <h3>Shell Native</h3>
+        <p>Works with explicit <code>ai</code> wrapping plus optional command shims in Bash and zsh.</p>
+      </article>
+      <article class="card">
+        <h3>Artifacts You Can Trust</h3>
+        <p>Every run gets structured metadata, digest, relevant excerpt, and full raw log. Retention keeps storage bounded.</p>
+      </article>
+      <article class="card">
+        <h3>Fast Debug Loop</h3>
+        <p><code>aish-run --last</code> shows context immediately. <code>--open</code> jumps straight into full logs with your pager.</p>
+      </article>
+    </section>
+
+    <section class="banner">
+      <strong>Built for engineers who live in terminals:</strong>
+      fewer scroll marathons, faster root-cause, same command workflow.
+    </section>
+  </main>
+</body>
+</html>
