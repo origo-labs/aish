@@ -15,4 +15,22 @@ commands = ["pytest", "jest", "gradle", "mvn", "go", "cargo", "npm", "pnpm", "ya
 skip_commands = ["cat", "less", "more", "man", "ssh", "vim", "nano", "top", "htop"]
 
 [detectors]
-enabled = ["generic", "pytest", "jest", "gradle", "maven"]
+enabled = [
+  "generic",
+  "pytest",
+  "jest",
+  "vitest",
+  "cargo",
+  "go",
+  "tsc",
+  "eslint",
+  "ruff",
+  "mypy",
+  "gradle",
+  "maven",
+  "dotnet",
+  "cmake",
+  "terraform",
+  "docker",
+  "kubectl",
+]

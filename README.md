@@ -2,7 +2,7 @@
 
 AISH is a shell-friendly command runner that executes commands in a PTY, logs full output, and prints concise summaries by default.
 
-Current implementation lives in `crates/aish-run` and is integrated through `shell/init.bash`.
+Current implementation lives in `crates/aish-run` and is integrated through `shell/init.bash` and `shell/init.zsh`.
 
 ## What It Does
 - Runs commands through `aish-run` (PTY by default).
@@ -13,16 +13,30 @@ Current implementation lives in `crates/aish-run` and is integrated through `she
   - generic
   - pytest
   - jest
+  - vitest
+  - cargo
+  - go
+  - tsc
+  - eslint
+  - ruff
+  - mypy
   - gradle
   - maven
+  - dotnet
+  - cmake/ctest
+  - terraform
+  - docker
+  - kubectl
 - Supports config-driven shell shim generation.
 - Provides quick access to last run output.
 
 ## Project Layout
 - `crates/aish-run`: Rust CLI runner.
 - `shell/init.bash`: shell function setup (`ai` and optional shims).
+- `shell/init.zsh`: zsh function setup (`ai` and optional shims).
 - `examples/config.toml`: sample config.
 - `docs/PLAN.md`: implementation plan.
+- `docs/NEXT_ITERATION.md`: detector/zsh iteration plan.
 - `specs/initial.md`: original MVP spec.
 
 ## Build
@@ -36,9 +50,15 @@ Run an explicit wrapped command:
 aish-run -- bash -lc 'echo hello'
 ```
 
-Or source shell integration and use `ai`:
+Or source shell integration and use `ai` (bash):
 ```bash
 source shell/init.bash
+ai bash -lc 'echo hello'
+```
+
+zsh setup:
+```zsh
+source shell/init.zsh
 ai bash -lc 'echo hello'
 ```
 
@@ -76,6 +96,11 @@ aish-run --print-shims
 AISH_ENABLE_SHIMS=0 source shell/init.bash
 ```
 
+`shell/init.zsh` supports the same behavior:
+```zsh
+AISH_ENABLE_SHIMS=0 source shell/init.zsh
+```
+
 ## Configuration
 Default config path:
 - `~/.config/aish/config.toml`
@@ -111,4 +136,5 @@ Retention is enforced after each run:
 - Preserves the current run being written.
 
 ## Status
-MVP phases 0-8 from `docs/PLAN.md` are implemented and committed.
+- MVP phases 0-8 from `docs/PLAN.md` are implemented.
+- Next iteration work from `docs/NEXT_ITERATION.md` includes command-aware detector routing, expanded detector coverage, fixture tests, and zsh init support.
