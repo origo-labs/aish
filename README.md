@@ -44,6 +44,17 @@ Current implementation lives in `crates/aish-run` and is integrated through `she
 cargo build
 ```
 
+## Install
+Install the binary into Cargo's bin directory (typically `~/.cargo/bin`):
+```bash
+cargo install --path crates/aish-run --locked
+```
+
+For local iteration, replace existing install:
+```bash
+cargo install --path crates/aish-run --locked --force
+```
+
 ## Basic Usage
 Run an explicit wrapped command:
 ```bash
