@@ -10,7 +10,12 @@ pub struct CommandOutcome {
     pub status_text: String,
 }
 
-pub fn run_in_pty(command: &[String], cwd: &Path, log_path: &Path) -> io::Result<CommandOutcome> {
+pub fn run_in_pty(
+    command: &[String],
+    cwd: &Path,
+    log_path: &Path,
+    stream_output: bool,
+) -> io::Result<CommandOutcome> {
     let pair = native_pty_system()
         .openpty(PtySize {
             rows: 24,
@@ -37,8 +42,10 @@ pub fn run_in_pty(command: &[String], cwd: &Path, log_path: &Path) -> io::Result
             Ok(0) => break,
             Ok(n) => {
                 log_file.write_all(&buf[..n])?;
-                stdout.write_all(&buf[..n])?;
-                stdout.flush()?;
+                if stream_output {
+                    stdout.write_all(&buf[..n])?;
+                    stdout.flush()?;
+                }
             }
             Err(err) if err.kind() == io::ErrorKind::Interrupted => continue,
             Err(err) => return Err(err),
@@ -59,6 +66,7 @@ pub fn run_without_pty(
     command: &[String],
     cwd: &Path,
     log_path: &Path,
+    stream_output: bool,
 ) -> io::Result<CommandOutcome> {
     let output = std::process::Command::new(&command[0])
         .args(command.iter().skip(1))
@@ -69,8 +77,10 @@ pub fn run_without_pty(
     log_file.write_all(&output.stdout)?;
     log_file.write_all(&output.stderr)?;
 
-    io::stdout().write_all(&output.stdout)?;
-    io::stderr().write_all(&output.stderr)?;
+    if stream_output {
+        io::stdout().write_all(&output.stdout)?;
+        io::stderr().write_all(&output.stderr)?;
+    }
 
     let exit_code = output.status.code().unwrap_or(1);
     let success = output.status.success();

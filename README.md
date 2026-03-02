@@ -83,6 +83,11 @@ aish-run --show full -- bash -lc 'echo ok'
 aish-run --show quiet -- bash -lc 'echo ok'
 ```
 
+Mode behavior:
+- `full`: streams live command output to terminal.
+- `auto`, `digest`, `excerpt`, `quiet`: do not stream live output; render post-run summary/excerpt according to mode.
+- `max_excerpt_lines` applies to rendered excerpts, not full live output.
+
 ### Last Run Helpers
 ```bash
 aish-run --last

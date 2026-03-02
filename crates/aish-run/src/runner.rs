@@ -1,4 +1,4 @@
-use crate::cli::Cli;
+use crate::cli::{Cli, ShowMode};
 use crate::{config, detectors, policy, pty, render, store};
 use serde::Serialize;
 use std::fs;
@@ -38,16 +38,17 @@ pub fn run(args: &Cli) -> Result<i32, String> {
         .map(PathBuf::from)
         .unwrap_or(app_config.store.root.clone());
     let effective_policy = policy::resolve(&args.command, &app_config, args.show.clone());
+    let stream_output = matches!(effective_policy.show_mode, ShowMode::Full);
 
     fs::create_dir_all(&root).map_err(|e| format!("failed to create store root: {e}"))?;
     let run_paths = store::prepare_run_dir(&root, started)
         .map_err(|e| format!("failed to prepare run dir: {e}"))?;
 
     let command_outcome = if args.no_pty {
-        pty::run_without_pty(&args.command, &cwd, &run_paths.log_path)
+        pty::run_without_pty(&args.command, &cwd, &run_paths.log_path, stream_output)
             .map_err(|e| format!("failed to run command without pty: {e}"))?
     } else {
-        pty::run_in_pty(&args.command, &cwd, &run_paths.log_path)
+        pty::run_in_pty(&args.command, &cwd, &run_paths.log_path, stream_output)
             .map_err(|e| format!("failed to run command in pty: {e}"))?
     };
 
