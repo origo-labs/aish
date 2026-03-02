@@ -109,6 +109,13 @@ pub fn run(args: &Cli) -> Result<i32, String> {
 
     store::update_last_symlink(&run_paths.last_link, &run_paths.run_dir)
         .map_err(|e| format!("failed to update last symlink: {e}"))?;
+    store::enforce_retention(
+        &root,
+        app_config.store.keep_days,
+        app_config.store.max_total_mb,
+        &run_paths.run_dir,
+    )
+    .map_err(|e| format!("failed to enforce retention policy: {e}"))?;
 
     render::render_summary(render::RenderContext {
         show_mode: effective_policy.show_mode,
