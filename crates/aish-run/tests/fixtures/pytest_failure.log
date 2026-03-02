@@ -1,0 +1,9 @@
+============================= test session starts =============================
+collected 2 items
+
+=========================== FAILURES ===========================
+___________________ test_foo ___________________
+E   AssertionError: expected 2 == 1
+===================== short test summary info ====================
+FAILED test_sample.py::test_foo - AssertionError
+1 failed, 1 passed in 0.12s

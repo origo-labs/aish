@@ -1,0 +1,6 @@
+Error: Invalid value for variable
+
+  on main.tf line 12, in resource "aws_s3_bucket" "b":
+  12: bucket = var.bucket_name
+
+Planning failed. Terraform encountered an error while generating this plan.

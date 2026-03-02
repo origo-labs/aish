@@ -1,0 +1,9 @@
+ RUN  v1.4.0 /repo
+ ❯ src/add.test.ts (1)
+   ❯ add (1)
+     × sums numbers
+
+ Failed Tests 1
+ FAIL  src/add.test.ts > add > sums numbers
+ AssertionError: expected 3 to be 4
+ Test Files  1 failed (1)

@@ -1,0 +1,5 @@
+=== RUN   TestSum
+--- FAIL: TestSum (0.00s)
+    sum_test.go:12: expected 4 got 3
+FAIL
+FAIL\tgithub.com/acme/sum\t0.203s

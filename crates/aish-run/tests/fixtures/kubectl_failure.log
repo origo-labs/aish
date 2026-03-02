@@ -1,0 +1,2 @@
+error: resource mapping not found for name: "api" namespace: "default" from "k8s.yaml": no matches for kind "Deployment" in version "apps/v2"
+ensure CRDs are installed first

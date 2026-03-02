@@ -48,7 +48,16 @@ pub fn analyze_log(
 
     let raw_text = String::from_utf8_lossy(&log_bytes);
     let parsed_text = strip_ansi(&raw_text);
-    let lines: Vec<&str> = parsed_text.lines().collect();
+    analyze_text(&parsed_text, exit_code, enabled_detectors, command)
+}
+
+fn analyze_text(
+    text: &str,
+    exit_code: i32,
+    enabled_detectors: &[String],
+    command: &[String],
+) -> AnalysisResult {
+    let lines: Vec<&str> = text.lines().collect();
     let cmd_name = command_basename(command).to_ascii_lowercase();
 
     let mut best: Option<RuleResult> = None;
@@ -449,6 +458,8 @@ fn tool_rules() -> &'static [ToolRule] {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
+    use std::path::PathBuf;
 
     #[test]
     fn strips_ansi_sequences() {
@@ -477,5 +488,62 @@ mod tests {
         let generic = evaluate_rule(generic_rule, "pytest", &lines, 1);
 
         assert!(pytest.confidence > generic.confidence);
+    }
+
+    #[test]
+    fn fixture_suite_routes_to_expected_detectors() {
+        let cases = [
+            ("pytest_failure.log", vec!["pytest"], "pytest"),
+            ("jest_failure.log", vec!["jest"], "jest"),
+            ("vitest_failure.log", vec!["vitest"], "vitest"),
+            ("cargo_failure.log", vec!["cargo", "test"], "cargo"),
+            ("go_failure.log", vec!["go", "test"], "go"),
+            ("tsc_failure.log", vec!["tsc"], "tsc"),
+            ("eslint_failure.log", vec!["eslint"], "eslint"),
+            (
+                "terraform_failure.log",
+                vec!["terraform", "plan"],
+                "terraform",
+            ),
+            ("docker_failure.log", vec!["docker", "build"], "docker"),
+            ("kubectl_failure.log", vec!["kubectl", "apply"], "kubectl"),
+        ];
+
+        for (fixture, command, expected_detector) in cases {
+            let text = read_fixture(fixture);
+            let command_vec = command.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+            let enabled = tool_rules()
+                .iter()
+                .map(|r| r.id.to_string())
+                .collect::<Vec<_>>();
+            let result = analyze_text(&text, 1, &enabled, &command_vec);
+
+            let detector_line = result
+                .summary_lines
+                .iter()
+                .find(|line| line.starts_with("detector: "))
+                .cloned()
+                .unwrap_or_default();
+
+            assert_eq!(
+                detector_line,
+                format!("detector: {expected_detector}"),
+                "fixture {fixture} selected wrong detector"
+            );
+            assert!(
+                result
+                    .excerpt
+                    .as_ref()
+                    .is_some_and(|e| !e.trim().is_empty()),
+                "fixture {fixture} should produce non-empty excerpt"
+            );
+        }
+    }
+
+    fn read_fixture(name: &str) -> String {
+        let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        path.push("tests/fixtures");
+        path.push(name);
+        fs::read_to_string(&path).expect("fixture file")
     }
 }
