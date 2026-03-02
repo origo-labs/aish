@@ -36,6 +36,10 @@ pub struct Cli {
     #[arg(long)]
     pub version_info: bool,
 
+    /// Print shell function shims derived from config wrap commands.
+    #[arg(long)]
+    pub print_shims: bool,
+
     /// Command and args to execute; pass after `--`.
     #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
     pub command: Vec<String>,
