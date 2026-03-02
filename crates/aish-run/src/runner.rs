@@ -1,5 +1,5 @@
 use crate::cli::Cli;
-use crate::{config, pty, render, store};
+use crate::{config, detectors, pty, render, store};
 use serde::Serialize;
 use std::fs;
 use std::path::PathBuf;
@@ -52,15 +52,23 @@ pub fn run(args: &Cli) -> Result<i32, String> {
     let ended = OffsetDateTime::now_utc();
     let duration_ms = (ended - started).whole_milliseconds();
 
-    let digest = render::build_digest(command_outcome.success, duration_ms, &args.command, ended);
+    let analysis = detectors::analyze_log(&run_paths.log_path, command_outcome.exit_code);
+    let mut digest =
+        render::build_digest(command_outcome.success, duration_ms, &args.command, ended);
+    if let Some(summary) = analysis.summary_lines.first() {
+        digest.push_str(" | ");
+        digest.push_str(summary);
+    }
     fs::write(&run_paths.digest_path, &digest)
         .map_err(|e| format!("failed to write digest: {e}"))?;
 
     let excerpt = if !command_outcome.success {
-        let failure_note = format!("command failed ({})", command_outcome.status_text);
-        fs::write(&run_paths.relevant_path, &failure_note)
+        let detected = analysis
+            .excerpt
+            .unwrap_or_else(|| format!("command failed ({})", command_outcome.status_text));
+        fs::write(&run_paths.relevant_path, &detected)
             .map_err(|e| format!("failed to write relevant excerpt: {e}"))?;
-        Some(failure_note)
+        Some(detected)
     } else {
         None
     };
