@@ -8,8 +8,8 @@ readme = "../../README.md"
 license = "MIT"
 authors = ["AISH Contributors"]
 documentation = "https://docs.rs/aish-run"
-homepage = "https://github.com/origo/aish"
-repository = "https://github.com/origo/aish"
+homepage = "https://github.com/origo-labs/aish"
+repository = "https://github.com/origo-labs/aish"
 keywords = ["cli", "shell", "developer-tools", "pty", "logging"]
 categories = ["command-line-utilities", "development-tools"]
 
