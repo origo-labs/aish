@@ -3,6 +3,7 @@ use crate::{config, detectors, policy, pty, render, store};
 use serde::Serialize;
 use std::fs;
 use std::path::PathBuf;
+use std::process::Command;
 use time::OffsetDateTime;
 
 #[derive(Debug, Serialize)]
@@ -134,4 +135,57 @@ pub fn run(args: &Cli) -> Result<i32, String> {
 fn format_time(ts: OffsetDateTime) -> String {
     ts.format(&time::format_description::well_known::Rfc3339)
         .unwrap_or_else(|_| "unknown-time".to_string())
+}
+
+pub fn show_last(cfg: &config::AppConfig) -> Result<i32, String> {
+    let last_dir = resolve_last_run_dir(cfg)?;
+    let relevant = last_dir.join("relevant.txt");
+    let digest = last_dir.join("digest.txt");
+
+    if relevant.exists() {
+        let content = fs::read_to_string(&relevant)
+            .map_err(|e| format!("failed to read {}: {e}", relevant.display()))?;
+        println!("{content}");
+        return Ok(0);
+    }
+
+    if digest.exists() {
+        let content = fs::read_to_string(&digest)
+            .map_err(|e| format!("failed to read {}: {e}", digest.display()))?;
+        println!("{content}");
+        return Ok(0);
+    }
+
+    Err(format!(
+        "no relevant.txt or digest.txt found in last run: {}",
+        last_dir.display()
+    ))
+}
+
+pub fn open_last(cfg: &config::AppConfig) -> Result<i32, String> {
+    let last_dir = resolve_last_run_dir(cfg)?;
+    let log_path = last_dir.join("pty.log");
+    if !log_path.exists() {
+        return Err(format!("missing log file: {}", log_path.display()));
+    }
+
+    let pager = std::env::var("PAGER").unwrap_or_else(|_| "less".to_string());
+    let status = Command::new(&pager)
+        .arg(&log_path)
+        .status()
+        .or_else(|_| Command::new("cat").arg(&log_path).status())
+        .map_err(|e| format!("failed to open {}: {e}", log_path.display()))?;
+
+    Ok(status.code().unwrap_or(1))
+}
+
+fn resolve_last_run_dir(cfg: &config::AppConfig) -> Result<PathBuf, String> {
+    let last_link = cfg.store.root.join("last");
+    if !last_link.exists() {
+        return Err(format!("last run link not found: {}", last_link.display()));
+    }
+
+    let run_dir = fs::read_link(&last_link)
+        .map_err(|e| format!("failed to resolve {}: {e}", last_link.display()))?;
+    Ok(run_dir)
 }

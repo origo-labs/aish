@@ -29,6 +29,30 @@ fn main() {
         return;
     }
 
+    if args.last || args.open {
+        let cfg = match config::AppConfig::load() {
+            Ok(cfg) => cfg,
+            Err(err) => {
+                eprintln!("aish-run error: {err}");
+                std::process::exit(1);
+            }
+        };
+
+        let result = if args.last {
+            runner::show_last(&cfg)
+        } else {
+            runner::open_last(&cfg)
+        };
+
+        match result {
+            Ok(code) => std::process::exit(code),
+            Err(err) => {
+                eprintln!("aish-run error: {err}");
+                std::process::exit(1);
+            }
+        }
+    }
+
     if args.command.is_empty() {
         eprintln!("No command provided. Use `aish-run -- <command> [args...]`.");
         std::process::exit(2);

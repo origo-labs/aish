@@ -40,6 +40,14 @@ pub struct Cli {
     #[arg(long)]
     pub print_shims: bool,
 
+    /// Print last run relevant excerpt (or digest fallback).
+    #[arg(long)]
+    pub last: bool,
+
+    /// Open last run full log in pager.
+    #[arg(long)]
+    pub open: bool,
+
     /// Command and args to execute; pass after `--`.
     #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
     pub command: Vec<String>,
