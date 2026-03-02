@@ -17,8 +17,8 @@ pub enum ShowMode {
 )]
 pub struct Cli {
     /// Output mode for terminal rendering.
-    #[arg(long, value_enum, default_value = "auto")]
-    pub show: ShowMode,
+    #[arg(long, value_enum)]
+    pub show: Option<ShowMode>,
 
     /// Disable PTY execution and use non-interactive execution.
     #[arg(long)]

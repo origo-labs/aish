@@ -23,7 +23,11 @@ pub struct AnalysisResult {
     pub excerpt: Option<String>,
 }
 
-pub fn analyze_log(log_path: &Path, exit_code: i32) -> AnalysisResult {
+pub fn analyze_log(
+    log_path: &Path,
+    exit_code: i32,
+    enabled_detectors: &[String],
+) -> AnalysisResult {
     let log_bytes = match fs::read(log_path) {
         Ok(bytes) => bytes,
         Err(_) => {
@@ -37,13 +41,22 @@ pub fn analyze_log(log_path: &Path, exit_code: i32) -> AnalysisResult {
     let text = String::from_utf8_lossy(&log_bytes);
     let lines: Vec<&str> = text.lines().collect();
 
-    let mut detectors: Vec<Box<dyn Detector>> = vec![
-        Box::new(PytestDetector::new()),
-        Box::new(JestDetector::new()),
-        Box::new(GradleDetector::new()),
-        Box::new(MavenDetector::new()),
-        Box::new(GenericErrorDetector::new()),
-    ];
+    let mut detectors: Vec<Box<dyn Detector>> = Vec::new();
+    if detector_enabled("pytest", enabled_detectors) {
+        detectors.push(Box::new(PytestDetector::new()));
+    }
+    if detector_enabled("jest", enabled_detectors) {
+        detectors.push(Box::new(JestDetector::new()));
+    }
+    if detector_enabled("gradle", enabled_detectors) {
+        detectors.push(Box::new(GradleDetector::new()));
+    }
+    if detector_enabled("maven", enabled_detectors) {
+        detectors.push(Box::new(MavenDetector::new()));
+    }
+    if detector_enabled("generic", enabled_detectors) {
+        detectors.push(Box::new(GenericErrorDetector::new()));
+    }
 
     for line in &lines {
         for detector in &mut detectors {
@@ -76,6 +89,13 @@ pub fn analyze_log(log_path: &Path, exit_code: i32) -> AnalysisResult {
         summary_lines,
         excerpt,
     }
+}
+
+fn detector_enabled(name: &str, enabled: &[String]) -> bool {
+    if enabled.is_empty() {
+        return true;
+    }
+    enabled.iter().any(|item| item == name)
 }
 
 fn should_replace_best(current: Option<&DetectorResult>, candidate: &DetectorResult) -> bool {
