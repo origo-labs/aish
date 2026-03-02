@@ -18,9 +18,9 @@ fn main() {
         return;
     }
 
-    if args.print_shims {
+    if args.print_shims || args.print_shims_active {
         match config::AppConfig::load() {
-            Ok(cfg) => print_shims(&cfg),
+            Ok(cfg) => print_shims(&cfg, args.print_shims_active),
             Err(err) => {
                 eprintln!("aish-run error: {err}");
                 std::process::exit(1);
@@ -67,8 +67,8 @@ fn main() {
     }
 }
 
-fn print_shims(cfg: &config::AppConfig) {
-    if cfg.wrap.default_mode != "on" {
+fn print_shims(cfg: &config::AppConfig, active_only: bool) {
+    if active_only && cfg.wrap.default_mode != "on" {
         return;
     }
 

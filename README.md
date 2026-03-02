@@ -98,9 +98,14 @@ aish-run --open
 ai() { command aish-run -- "$@"; }
 ```
 
-Optional shims are loaded from config when `wrap.default = "on"`:
+Print all configured shim candidates:
 ```bash
 aish-run --print-shims
+```
+
+Print only active shims (respects `wrap.default = "on"`):
+```bash
+aish-run --print-shims-active
 ```
 
 `shell/init.bash` evaluates generated shims unless disabled:

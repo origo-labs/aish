@@ -40,6 +40,10 @@ pub struct Cli {
     #[arg(long)]
     pub print_shims: bool,
 
+    /// Print shell shims only when wrap.default is set to "on".
+    #[arg(long)]
+    pub print_shims_active: bool,
+
     /// Print last run relevant excerpt (or digest fallback).
     #[arg(long)]
     pub last: bool,
