@@ -37,7 +37,14 @@ pub fn analyze_log(log_path: &Path, exit_code: i32) -> AnalysisResult {
     let text = String::from_utf8_lossy(&log_bytes);
     let lines: Vec<&str> = text.lines().collect();
 
-    let mut detectors: Vec<Box<dyn Detector>> = vec![Box::new(GenericErrorDetector::new())];
+    let mut detectors: Vec<Box<dyn Detector>> = vec![
+        Box::new(PytestDetector::new()),
+        Box::new(JestDetector::new()),
+        Box::new(GradleDetector::new()),
+        Box::new(MavenDetector::new()),
+        Box::new(GenericErrorDetector::new()),
+    ];
+
     for line in &lines {
         for detector in &mut detectors {
             detector.observe_line(line);
@@ -189,6 +196,268 @@ impl Detector for GenericErrorDetector {
             tool: None,
             summary,
             relevant: self.build_excerpt(exit_code),
+            confidence,
+        }
+    }
+}
+
+struct PytestDetector {
+    lines: Vec<String>,
+}
+
+impl PytestDetector {
+    fn new() -> Self {
+        Self { lines: Vec::new() }
+    }
+}
+
+impl Detector for PytestDetector {
+    fn name(&self) -> &'static str {
+        "pytest"
+    }
+
+    fn observe_line(&mut self, line: &str) {
+        self.lines.push(line.to_string());
+    }
+
+    fn finalize(&self, exit_code: i32) -> DetectorResult {
+        let mut summary = Vec::new();
+        let mut relevant = Vec::new();
+        let mut confidence = 0;
+
+        let failures_idx = self.lines.iter().position(|l| l.contains("FAILURES"));
+        let summary_line = self
+            .lines
+            .iter()
+            .rev()
+            .find(|l| l.contains("failed") || l.contains("passed") || l.contains("skipped"));
+
+        if failures_idx.is_some()
+            || self
+                .lines
+                .iter()
+                .any(|l| l.contains("collected") && l.contains("items"))
+        {
+            confidence = if failures_idx.is_some() { 90 } else { 40 };
+            summary.push(format!("command failed with exit code {exit_code}"));
+            if let Some(line) = summary_line {
+                summary.push(line.trim().to_string());
+            }
+        }
+
+        if let Some(idx) = failures_idx {
+            let end = self
+                .lines
+                .iter()
+                .skip(idx + 1)
+                .position(|l| l.contains("short test summary info") || l.contains("===="))
+                .map(|offset| idx + 1 + offset)
+                .unwrap_or_else(|| usize::min(idx + 120, self.lines.len()));
+            let bounded_end = usize::min(end, self.lines.len());
+            relevant.extend(self.lines[idx..bounded_end].iter().cloned());
+        }
+
+        DetectorResult {
+            detector: self.name(),
+            tool: Some("pytest".to_string()),
+            summary,
+            relevant,
+            confidence,
+        }
+    }
+}
+
+struct JestDetector {
+    lines: Vec<String>,
+}
+
+impl JestDetector {
+    fn new() -> Self {
+        Self { lines: Vec::new() }
+    }
+}
+
+impl Detector for JestDetector {
+    fn name(&self) -> &'static str {
+        "jest"
+    }
+
+    fn observe_line(&mut self, line: &str) {
+        self.lines.push(line.to_string());
+    }
+
+    fn finalize(&self, exit_code: i32) -> DetectorResult {
+        let mut summary = Vec::new();
+        let mut relevant = Vec::new();
+        let mut confidence = 0;
+
+        let first_fail = self
+            .lines
+            .iter()
+            .position(|l| l.starts_with("FAIL ") || l.trim_start().starts_with("FAIL "));
+        let suites = self.lines.iter().rev().find(|l| l.contains("Test Suites:"));
+        let tests = self.lines.iter().rev().find(|l| l.contains("Tests:"));
+
+        if first_fail.is_some() || suites.is_some() {
+            confidence = if first_fail.is_some() { 88 } else { 35 };
+            summary.push(format!("command failed with exit code {exit_code}"));
+            if let Some(s) = suites {
+                summary.push(s.trim().to_string());
+            }
+            if let Some(t) = tests {
+                summary.push(t.trim().to_string());
+            }
+        }
+
+        if let Some(idx) = first_fail {
+            let end = self
+                .lines
+                .iter()
+                .skip(idx + 1)
+                .position(|l| l.contains("Test Suites:"))
+                .map(|offset| idx + 1 + offset + 1)
+                .unwrap_or_else(|| usize::min(idx + 120, self.lines.len()));
+            relevant.extend(
+                self.lines[idx..usize::min(end, self.lines.len())]
+                    .iter()
+                    .cloned(),
+            );
+        }
+
+        DetectorResult {
+            detector: self.name(),
+            tool: Some("jest".to_string()),
+            summary,
+            relevant,
+            confidence,
+        }
+    }
+}
+
+struct GradleDetector {
+    lines: Vec<String>,
+}
+
+impl GradleDetector {
+    fn new() -> Self {
+        Self { lines: Vec::new() }
+    }
+}
+
+impl Detector for GradleDetector {
+    fn name(&self) -> &'static str {
+        "gradle"
+    }
+
+    fn observe_line(&mut self, line: &str) {
+        self.lines.push(line.to_string());
+    }
+
+    fn finalize(&self, exit_code: i32) -> DetectorResult {
+        let mut summary = Vec::new();
+        let mut relevant = Vec::new();
+        let failure_idx = self
+            .lines
+            .iter()
+            .position(|l| l.contains("FAILURE: Build failed with an exception."));
+        let build_failed = self.lines.iter().any(|l| l.contains("BUILD FAILED"));
+
+        let confidence = if failure_idx.is_some() {
+            86
+        } else if build_failed {
+            50
+        } else {
+            0
+        };
+
+        if confidence > 0 {
+            summary.push(format!("command failed with exit code {exit_code}"));
+            summary.push("gradle build failure detected".to_string());
+        }
+
+        if let Some(idx) = failure_idx {
+            let end = self
+                .lines
+                .iter()
+                .skip(idx + 1)
+                .position(|l| l.contains("* Try:") || l.contains("BUILD FAILED"))
+                .map(|offset| idx + 1 + offset + 1)
+                .unwrap_or_else(|| usize::min(idx + 120, self.lines.len()));
+            relevant.extend(
+                self.lines[idx..usize::min(end, self.lines.len())]
+                    .iter()
+                    .cloned(),
+            );
+        }
+
+        DetectorResult {
+            detector: self.name(),
+            tool: Some("gradle".to_string()),
+            summary,
+            relevant,
+            confidence,
+        }
+    }
+}
+
+struct MavenDetector {
+    lines: Vec<String>,
+}
+
+impl MavenDetector {
+    fn new() -> Self {
+        Self { lines: Vec::new() }
+    }
+}
+
+impl Detector for MavenDetector {
+    fn name(&self) -> &'static str {
+        "maven"
+    }
+
+    fn observe_line(&mut self, line: &str) {
+        self.lines.push(line.to_string());
+    }
+
+    fn finalize(&self, exit_code: i32) -> DetectorResult {
+        let mut summary = Vec::new();
+        let mut relevant = Vec::new();
+        let first_error = self.lines.iter().position(|l| l.starts_with("[ERROR]"));
+        let build_failure = self.lines.iter().any(|l| l.contains("BUILD FAILURE"));
+
+        let confidence = if first_error.is_some() {
+            84
+        } else if build_failure {
+            45
+        } else {
+            0
+        };
+
+        if confidence > 0 {
+            summary.push(format!("command failed with exit code {exit_code}"));
+            summary.push("maven build failure detected".to_string());
+        }
+
+        if let Some(idx) = first_error {
+            let end = self
+                .lines
+                .iter()
+                .skip(idx + 1)
+                .position(|l| !l.starts_with("[ERROR]") && !l.trim().is_empty())
+                .map(|offset| idx + 1 + offset)
+                .unwrap_or_else(|| usize::min(idx + 60, self.lines.len()));
+            relevant.extend(
+                self.lines[idx..usize::min(end, self.lines.len())]
+                    .iter()
+                    .cloned(),
+            );
+        }
+
+        DetectorResult {
+            detector: self.name(),
+            tool: Some("maven".to_string()),
+            summary,
+            relevant,
             confidence,
         }
     }
