@@ -34,7 +34,8 @@ Current implementation lives in `crates/aish-run` and is integrated through `she
 - `crates/aish-run`: Rust CLI runner.
 - `shell/init.bash`: shell function setup (`ai` and optional shims).
 - `shell/init.zsh`: zsh function setup (`ai` and optional shims).
-- `examples/config.toml`: sample config.
+- `examples/`: config presets and samples.
+- `docs/CONFIG_REFERENCE.md`: config keys, types, and semantics.
 - `docs/PLAN.md`: implementation plan.
 - `docs/NEXT_ITERATION.md`: detector/zsh iteration plan.
 - `specs/initial.md`: original MVP spec.
@@ -120,6 +121,12 @@ Override config path with:
 - `AISH_CONFIG=/path/to/config.toml`
 
 Sample config is provided in [`examples/config.toml`](examples/config.toml).
+Config reference is available at [`docs/CONFIG_REFERENCE.md`](docs/CONFIG_REFERENCE.md).
+
+More config examples:
+- [`examples/config-minimal.toml`](examples/config-minimal.toml): minimal setup.
+- [`examples/config-dev-shims.toml`](examples/config-dev-shims.toml): local dev with shims.
+- [`examples/config-ci.toml`](examples/config-ci.toml): CI-friendly output and retention.
 
 ### Key Config Areas
 - `[store]`: log root, retention days, max total size.

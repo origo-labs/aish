@@ -1,0 +1,24 @@
+# CI-focused config: quieter terminal output and tighter retention.
+[store]
+root = "/tmp/aish-ci"
+keep_days = 3
+max_total_mb = 500
+
+[output]
+mode = "digest"
+max_excerpt_lines = 120
+max_digest_lines = 2
+show_log_path = true
+
+[wrap]
+default = "off"
+commands = []
+skip_commands = []
+
+[detectors]
+enabled = ["generic", "pytest", "jest", "vitest", "cargo", "go", "maven", "gradle", "dotnet"]
+
+[[policy]]
+match = "pytest"
+show = "excerpt"
+max_excerpt_lines = 200

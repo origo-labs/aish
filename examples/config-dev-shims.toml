@@ -1,0 +1,38 @@
+# Dev-focused config: auto mode, richer excerpts, and shell shims enabled.
+[store]
+root = "~/.local/state/aish"
+keep_days = 14
+max_total_mb = 2000
+
+[output]
+mode = "auto"
+max_excerpt_lines = 300
+max_digest_lines = 4
+show_log_path = true
+
+[wrap]
+default = "on"
+commands = ["pytest", "cargo", "go", "mvn", "gradle", "docker", "kubectl"]
+skip_commands = ["cat", "less", "man", "ssh", "vim", "nano", "top", "htop"]
+
+[detectors]
+enabled = [
+  "generic",
+  "pytest",
+  "cargo",
+  "go",
+  "maven",
+  "gradle",
+  "docker",
+  "kubectl",
+]
+
+[[policy]]
+match = "pytest"
+show = "excerpt"
+max_excerpt_lines = 500
+
+[[policy]]
+match = "cargo"
+args_prefix = ["test"]
+show = "auto"

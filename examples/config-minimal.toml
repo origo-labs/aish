@@ -1,0 +1,3 @@
+# Minimal config: keep defaults except storage root.
+[store]
+root = "~/.local/state/aish"
