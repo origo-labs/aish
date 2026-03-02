@@ -2,6 +2,16 @@
 name = "aish-run"
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.85"
+description = "PTY-first shell command runner with logs, summaries, and tool-aware failure excerpts"
+readme = "../../README.md"
+license = "MIT"
+authors = ["AISH Contributors"]
+documentation = "https://docs.rs/aish-run"
+homepage = "https://github.com/origo/aish"
+repository = "https://github.com/origo/aish"
+keywords = ["cli", "shell", "developer-tools", "pty", "logging"]
+categories = ["command-line-utilities", "development-tools"]
 
 [dependencies]
 anyhow = "1.0.97"
