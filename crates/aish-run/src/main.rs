@@ -23,5 +23,11 @@ fn main() {
         std::process::exit(2);
     }
 
-    println!("Phase 0 scaffold ready. Command: {:?}", args.command);
+    match runner::run(&args) {
+        Ok(code) => std::process::exit(code),
+        Err(err) => {
+            eprintln!("aish-run error: {err}");
+            std::process::exit(1);
+        }
+    }
 }

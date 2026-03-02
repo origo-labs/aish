@@ -10,7 +10,11 @@ pub enum ShowMode {
 }
 
 #[derive(Debug, Parser)]
-#[command(name = "aish-run", about = "AISH command runner", disable_version_flag = true)]
+#[command(
+    name = "aish-run",
+    about = "AISH command runner",
+    disable_version_flag = true
+)]
 pub struct Cli {
     /// Output mode for terminal rendering.
     #[arg(long, value_enum, default_value = "auto")]

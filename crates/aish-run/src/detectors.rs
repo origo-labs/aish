@@ -1,1 +1,1 @@
-// Phase 0 scaffold module.
+// Phase 1: detectors are introduced in a later phase.
