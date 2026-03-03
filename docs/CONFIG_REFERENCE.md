@@ -32,6 +32,7 @@ max_total_mb = 2000
 - `max_excerpt_lines` (`integer`): cap printed excerpt lines.
 - `max_digest_lines` (`integer`): cap printed digest lines.
 - `show_log_path` (`bool`): include `full log: ...` in terminal output.
+- `show_warnings_on_success` (`bool`): allow warning excerpts in terminal for successful runs when detectors find warning markers.
 
 Example:
 ```toml
@@ -40,6 +41,7 @@ mode = "auto"
 max_excerpt_lines = 200
 max_digest_lines = 3
 show_log_path = true
+show_warnings_on_success = false
 ```
 
 ## `[wrap]`
@@ -91,6 +93,7 @@ Per-command overrides, matched by command basename and optional argument prefix.
 - `match` (`string`): command basename to match (for example `cargo`, `pytest`).
 - `show` (`string`, optional): `auto`, `digest`, `excerpt`, `full`, `quiet`.
 - `excerpt_on_success` (`bool`, optional): write and allow excerpt on successful runs.
+- `show_warnings_on_success` (`bool`, optional): print detector warning excerpts for successful runs with warning markers.
 - `max_excerpt_lines` (`integer`, optional): per-policy excerpt cap.
 - `max_digest_lines` (`integer`, optional): per-policy digest cap.
 - `args_prefix` (`array[string]`, optional): only match when command args start with this prefix.
@@ -106,6 +109,10 @@ max_excerpt_lines = 400
 match = "cargo"
 args_prefix = ["test"]
 show = "auto"
+
+[[policy]]
+match = "eslint"
+show_warnings_on_success = true
 ```
 
 ## Complete Example

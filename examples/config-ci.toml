@@ -9,6 +9,7 @@ mode = "digest"
 max_excerpt_lines = 120
 max_digest_lines = 2
 show_log_path = true
+show_warnings_on_success = false
 
 [wrap]
 default = "off"

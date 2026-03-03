@@ -9,6 +9,7 @@ pub struct EffectivePolicy {
     pub max_digest_lines: usize,
     pub show_log_path: bool,
     pub excerpt_on_success: bool,
+    pub show_warnings_on_success: bool,
 }
 
 pub fn resolve(
@@ -23,6 +24,7 @@ pub fn resolve(
         max_digest_lines: config.output.max_digest_lines,
         show_log_path: config.output.show_log_path,
         excerpt_on_success: false,
+        show_warnings_on_success: config.output.show_warnings_on_success,
     };
 
     let cmd_name = command
@@ -51,6 +53,9 @@ pub fn resolve(
             }
             if let Some(on_success) = policy.excerpt_on_success {
                 effective.excerpt_on_success = on_success;
+            }
+            if let Some(show_warnings_on_success) = policy.show_warnings_on_success {
+                effective.show_warnings_on_success = show_warnings_on_success;
             }
         }
     }
@@ -81,4 +86,37 @@ fn basename(path: &str) -> &str {
         .file_name()
         .and_then(|s| s.to_str())
         .unwrap_or(path)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::{AppConfig, PolicyConfig};
+
+    #[test]
+    fn inherits_global_warning_setting_by_default() {
+        let mut cfg = AppConfig::default();
+        cfg.output.show_warnings_on_success = true;
+
+        let effective = resolve(&["eslint".to_string()], &cfg, None);
+        assert!(effective.show_warnings_on_success);
+    }
+
+    #[test]
+    fn policy_override_updates_warning_setting() {
+        let mut cfg = AppConfig::default();
+        cfg.output.show_warnings_on_success = false;
+        cfg.policies.push(PolicyConfig {
+            match_cmd: "eslint".to_string(),
+            show: None,
+            excerpt_on_success: None,
+            show_warnings_on_success: Some(true),
+            max_excerpt_lines: None,
+            max_digest_lines: None,
+            args_prefix: None,
+        });
+
+        let effective = resolve(&["eslint".to_string(), ".".to_string()], &cfg, None);
+        assert!(effective.show_warnings_on_success);
+    }
 }

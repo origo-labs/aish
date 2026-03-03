@@ -16,6 +16,7 @@ pub struct OutputConfig {
     pub max_excerpt_lines: usize,
     pub max_digest_lines: usize,
     pub show_log_path: bool,
+    pub show_warnings_on_success: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -35,6 +36,7 @@ pub struct PolicyConfig {
     pub match_cmd: String,
     pub show: Option<ShowMode>,
     pub excerpt_on_success: Option<bool>,
+    pub show_warnings_on_success: Option<bool>,
     pub max_excerpt_lines: Option<usize>,
     pub max_digest_lines: Option<usize>,
     pub args_prefix: Option<Vec<String>>,
@@ -72,6 +74,7 @@ struct RawOutputConfig {
     max_excerpt_lines: Option<usize>,
     max_digest_lines: Option<usize>,
     show_log_path: Option<bool>,
+    show_warnings_on_success: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -92,6 +95,7 @@ struct RawPolicyConfig {
     match_cmd: String,
     show: Option<String>,
     excerpt_on_success: Option<bool>,
+    show_warnings_on_success: Option<bool>,
     max_excerpt_lines: Option<usize>,
     max_digest_lines: Option<usize>,
     args_prefix: Option<Vec<String>>,
@@ -129,6 +133,7 @@ impl AppConfig {
                 max_excerpt_lines: 200,
                 max_digest_lines: 3,
                 show_log_path: true,
+                show_warnings_on_success: false,
             },
             wrap: WrapConfig {
                 default_mode: "off".to_string(),
@@ -223,6 +228,11 @@ fn merge_config(default: AppConfig, raw: RawConfig) -> AppConfig {
             .as_ref()
             .and_then(|o| o.show_log_path)
             .unwrap_or(default.output.show_log_path),
+        show_warnings_on_success: raw
+            .output
+            .as_ref()
+            .and_then(|o| o.show_warnings_on_success)
+            .unwrap_or(default.output.show_warnings_on_success),
     };
 
     let wrap = WrapConfig {
@@ -258,6 +268,7 @@ fn merge_config(default: AppConfig, raw: RawConfig) -> AppConfig {
             match_cmd: p.match_cmd,
             show: p.show.as_deref().and_then(parse_show_mode),
             excerpt_on_success: p.excerpt_on_success,
+            show_warnings_on_success: p.show_warnings_on_success,
             max_excerpt_lines: p.max_excerpt_lines,
             max_digest_lines: p.max_digest_lines,
             args_prefix: p.args_prefix,

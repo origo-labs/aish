@@ -140,10 +140,10 @@ More config examples:
 
 ### Key Config Areas
 - `[store]`: log root, retention days, max total size.
-- `[output]`: default show mode and line limits.
+- `[output]`: default show mode, line limits, and optional warning excerpts on success.
 - `[wrap]`: shim behavior and command lists.
 - `[detectors]`: enabled detectors.
-- `[[policy]]`: per-command overrides, including `args_prefix`.
+- `[[policy]]`: per-command overrides, including `args_prefix` and warning surfacing on success.
 
 ## Run Artifacts
 By default, runs are stored under:

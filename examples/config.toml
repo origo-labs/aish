@@ -8,6 +8,7 @@ mode = "auto"
 max_excerpt_lines = 200
 max_digest_lines = 3
 show_log_path = true
+show_warnings_on_success = false
 
 [wrap]
 default = "off"

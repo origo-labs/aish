@@ -11,6 +11,7 @@ pub struct RenderContext<'a> {
     pub max_excerpt_lines: usize,
     pub max_digest_lines: usize,
     pub show_log_path: bool,
+    pub show_excerpt_on_success: bool,
 }
 
 pub fn build_digest(
@@ -54,7 +55,7 @@ pub fn render_summary(ctx: RenderContext<'_>) {
             }
         }
         ShowMode::Excerpt => {
-            if !ctx.success {
+            if should_render_excerpt(&ctx.show_mode, ctx.success, ctx.show_excerpt_on_success) {
                 if let Some(excerpt) = excerpt {
                     println!("\n{excerpt}");
                 } else {
@@ -69,7 +70,7 @@ pub fn render_summary(ctx: RenderContext<'_>) {
         }
         ShowMode::Auto => {
             println!("\n{digest}");
-            if !ctx.success {
+            if should_render_excerpt(&ctx.show_mode, ctx.success, ctx.show_excerpt_on_success) {
                 if let Some(excerpt) = excerpt {
                     println!("\n{excerpt}");
                 }
@@ -78,6 +79,17 @@ pub fn render_summary(ctx: RenderContext<'_>) {
                 println!("full log: {}", ctx.log_path.display());
             }
         }
+    }
+}
+
+fn should_render_excerpt(
+    show_mode: &ShowMode,
+    success: bool,
+    show_excerpt_on_success: bool,
+) -> bool {
+    match show_mode {
+        ShowMode::Auto | ShowMode::Excerpt => !success || show_excerpt_on_success,
+        ShowMode::Digest | ShowMode::Full | ShowMode::Quiet => false,
     }
 }
 
@@ -97,4 +109,24 @@ fn clamp_lines(text: &str, max_lines: usize) -> String {
     }
 
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn render_excerpt_matrix_covers_modes() {
+        assert!(should_render_excerpt(&ShowMode::Auto, false, false));
+        assert!(!should_render_excerpt(&ShowMode::Auto, true, false));
+        assert!(should_render_excerpt(&ShowMode::Auto, true, true));
+
+        assert!(should_render_excerpt(&ShowMode::Excerpt, false, false));
+        assert!(!should_render_excerpt(&ShowMode::Excerpt, true, false));
+        assert!(should_render_excerpt(&ShowMode::Excerpt, true, true));
+
+        assert!(!should_render_excerpt(&ShowMode::Digest, false, true));
+        assert!(!should_render_excerpt(&ShowMode::Full, false, true));
+        assert!(!should_render_excerpt(&ShowMode::Quiet, false, true));
+    }
 }

@@ -70,10 +70,23 @@ pub fn run(args: &Cli) -> Result<i32, String> {
     fs::write(&run_paths.digest_path, &digest)
         .map_err(|e| format!("failed to write digest: {e}"))?;
 
-    let excerpt = if !command_outcome.success || effective_policy.excerpt_on_success {
-        let detected = analysis
-            .excerpt
-            .unwrap_or_else(|| format!("command failed ({})", command_outcome.status_text));
+    let should_show_warning_excerpt = should_show_warning_excerpt(
+        command_outcome.success,
+        analysis.warning_detected,
+        effective_policy.show_warnings_on_success,
+    );
+    let excerpt = if should_write_relevant_excerpt(
+        command_outcome.success,
+        effective_policy.excerpt_on_success,
+        should_show_warning_excerpt,
+    ) {
+        let detected = analysis.excerpt.unwrap_or_else(|| {
+            if command_outcome.success {
+                "command completed with warnings".to_string()
+            } else {
+                format!("command failed ({})", command_outcome.status_text)
+            }
+        });
         fs::write(&run_paths.relevant_path, &detected)
             .map_err(|e| format!("failed to write relevant excerpt: {e}"))?;
         Some(detected)
@@ -129,9 +142,26 @@ pub fn run(args: &Cli) -> Result<i32, String> {
         max_excerpt_lines: effective_policy.max_excerpt_lines,
         max_digest_lines: effective_policy.max_digest_lines,
         show_log_path: effective_policy.show_log_path,
+        show_excerpt_on_success: effective_policy.excerpt_on_success || should_show_warning_excerpt,
     });
 
     Ok(command_outcome.exit_code)
+}
+
+fn should_show_warning_excerpt(
+    success: bool,
+    warning_detected: bool,
+    show_warnings_on_success: bool,
+) -> bool {
+    success && warning_detected && show_warnings_on_success
+}
+
+fn should_write_relevant_excerpt(
+    success: bool,
+    excerpt_on_success: bool,
+    warning_excerpt_on_success: bool,
+) -> bool {
+    !success || excerpt_on_success || warning_excerpt_on_success
 }
 
 fn format_time(ts: OffsetDateTime) -> String {
@@ -190,4 +220,25 @@ fn resolve_last_run_dir(cfg: &config::AppConfig) -> Result<PathBuf, String> {
     let run_dir = fs::read_link(&last_link)
         .map_err(|e| format!("failed to resolve {}: {e}", last_link.display()))?;
     Ok(run_dir)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn warning_excerpt_only_when_all_conditions_match() {
+        assert!(should_show_warning_excerpt(true, true, true));
+        assert!(!should_show_warning_excerpt(false, true, true));
+        assert!(!should_show_warning_excerpt(true, false, true));
+        assert!(!should_show_warning_excerpt(true, true, false));
+    }
+
+    #[test]
+    fn relevant_excerpt_write_conditions_match_policy() {
+        assert!(should_write_relevant_excerpt(false, false, false));
+        assert!(should_write_relevant_excerpt(true, true, false));
+        assert!(should_write_relevant_excerpt(true, false, true));
+        assert!(!should_write_relevant_excerpt(true, false, false));
+    }
 }

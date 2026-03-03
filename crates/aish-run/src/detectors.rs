@@ -7,6 +7,7 @@ use std::path::Path;
 pub struct AnalysisResult {
     pub summary_lines: Vec<String>,
     pub excerpt: Option<String>,
+    pub warning_detected: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -14,6 +15,7 @@ struct RuleResult {
     detector: &'static str,
     tool: Option<&'static str>,
     confidence: u8,
+    marker_hits: usize,
     summary: Vec<String>,
     excerpt_lines: Vec<String>,
 }
@@ -42,6 +44,7 @@ pub fn analyze_log(
             return AnalysisResult {
                 summary_lines: Vec::new(),
                 excerpt: None,
+                warning_detected: false,
             };
         }
     };
@@ -71,6 +74,7 @@ fn analyze_text(
         }
     }
 
+    let warning_detected = exit_code == 0 && best.as_ref().is_some_and(|r| r.marker_hits > 0);
     let summary_lines = best
         .as_ref()
         .map(|r| {
@@ -82,12 +86,14 @@ fn analyze_text(
             lines
         })
         .unwrap_or_default();
-    let excerpt =
-        best.and_then(|r| (!r.excerpt_lines.is_empty()).then_some(r.excerpt_lines.join("\n")));
+    let excerpt = best
+        .as_ref()
+        .and_then(|r| (!r.excerpt_lines.is_empty()).then_some(r.excerpt_lines.join("\n")));
 
     AnalysisResult {
         summary_lines,
         excerpt,
+        warning_detected,
     }
 }
 
@@ -108,12 +114,13 @@ fn evaluate_rule(rule: ToolRule, cmd_name: &str, lines: &[&str], exit_code: i32)
     }
 
     let summary = build_summary(rule, lines, exit_code, marker_hits);
-    let excerpt_lines = build_excerpt(rule, lines, exit_code, command_match);
+    let excerpt_lines = build_excerpt(rule, lines, exit_code, command_match, marker_hits);
 
     RuleResult {
         detector: rule.id,
         tool: rule.tool,
         confidence: confidence.clamp(0, 100) as u8,
+        marker_hits,
         summary,
         excerpt_lines,
     }
@@ -127,7 +134,15 @@ fn build_summary(
 ) -> Vec<String> {
     let mut summary = Vec::new();
     if exit_code == 0 {
-        summary.push("command completed successfully".to_string());
+        if marker_hits > 0 {
+            summary.push("command completed with warnings".to_string());
+            summary.push(format!("matched {marker_hits} {} markers", rule.id));
+            if let Some(line) = find_last_line_with_any(lines, rule.summary_markers) {
+                summary.push(line.trim().to_string());
+            }
+        } else {
+            summary.push("command completed successfully".to_string());
+        }
         return summary;
     }
 
@@ -148,8 +163,13 @@ fn build_excerpt(
     lines: &[&str],
     exit_code: i32,
     command_match: bool,
+    marker_hits: usize,
 ) -> Vec<String> {
-    if lines.is_empty() || exit_code == 0 {
+    if lines.is_empty() {
+        return Vec::new();
+    }
+
+    if exit_code == 0 && marker_hits == 0 {
         return Vec::new();
     }
 
@@ -165,7 +185,7 @@ fn build_excerpt(
             .collect();
     }
 
-    if command_match {
+    if exit_code != 0 && command_match {
         let start_idx = lines.len().saturating_sub(80);
         return lines[start_idx..]
             .iter()
@@ -538,6 +558,31 @@ mod tests {
                 "fixture {fixture} should produce non-empty excerpt"
             );
         }
+    }
+
+    #[test]
+    fn warning_detection_on_success_works_for_eslint() {
+        let text = "src/main.ts\n  7:3  warning  Unexpected console statement  no-console\n\n✖ 1 problem (0 errors, 1 warning)\n";
+        let enabled = tool_rules()
+            .iter()
+            .map(|r| r.id.to_string())
+            .collect::<Vec<_>>();
+        let command_vec = vec!["eslint".to_string(), ".".to_string()];
+        let result = analyze_text(text, 0, &enabled, &command_vec);
+
+        assert!(result.warning_detected);
+        assert!(
+            result
+                .summary_lines
+                .first()
+                .is_some_and(|line| line == "command completed with warnings")
+        );
+        assert!(
+            result
+                .excerpt
+                .as_ref()
+                .is_some_and(|e| e.contains("warning"))
+        );
     }
 
     fn read_fixture(name: &str) -> String {
