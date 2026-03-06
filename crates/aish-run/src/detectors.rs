@@ -8,6 +8,7 @@ pub struct AnalysisResult {
     pub summary_lines: Vec<String>,
     pub excerpt: Option<String>,
     pub warning_detected: bool,
+    pub success_highlight_detected: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -15,9 +16,9 @@ struct RuleResult {
     detector: &'static str,
     tool: Option<&'static str>,
     confidence: u8,
-    marker_hits: usize,
     summary: Vec<String>,
     excerpt_lines: Vec<String>,
+    warning_detected: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -30,6 +31,7 @@ struct ToolRule {
     excerpt_start: &'static [&'static str],
     excerpt_end: &'static [&'static str],
     base_confidence: u8,
+    warn_on_success: bool,
 }
 
 pub fn analyze_log(
@@ -45,6 +47,7 @@ pub fn analyze_log(
                 summary_lines: Vec::new(),
                 excerpt: None,
                 warning_detected: false,
+                success_highlight_detected: false,
             };
         }
     };
@@ -74,7 +77,7 @@ fn analyze_text(
         }
     }
 
-    let warning_detected = exit_code == 0 && best.as_ref().is_some_and(|r| r.marker_hits > 0);
+    let warning_detected = best.as_ref().is_some_and(|r| r.warning_detected);
     let summary_lines = best
         .as_ref()
         .map(|r| {
@@ -89,11 +92,13 @@ fn analyze_text(
     let excerpt = best
         .as_ref()
         .and_then(|r| (!r.excerpt_lines.is_empty()).then_some(r.excerpt_lines.join("\n")));
+    let success_highlight_detected = exit_code == 0 && excerpt.is_some() && !warning_detected;
 
     AnalysisResult {
         summary_lines,
         excerpt,
         warning_detected,
+        success_highlight_detected,
     }
 }
 
@@ -112,17 +117,21 @@ fn evaluate_rule(rule: ToolRule, cmd_name: &str, lines: &[&str], exit_code: i32)
     if !command_match && marker_hits == 0 {
         confidence = 0;
     }
+    if rule.commands.is_empty() && marker_hits == 0 {
+        confidence = 0;
+    }
 
-    let summary = build_summary(rule, lines, exit_code, marker_hits);
+    let warning_detected = exit_code == 0 && rule.warn_on_success && marker_hits > 0;
+    let summary = build_summary(rule, lines, exit_code, marker_hits, warning_detected);
     let excerpt_lines = build_excerpt(rule, lines, exit_code, command_match, marker_hits);
 
     RuleResult {
         detector: rule.id,
         tool: rule.tool,
         confidence: confidence.clamp(0, 100) as u8,
-        marker_hits,
         summary,
         excerpt_lines,
+        warning_detected,
     }
 }
 
@@ -131,17 +140,20 @@ fn build_summary(
     lines: &[&str],
     exit_code: i32,
     marker_hits: usize,
+    warning_detected: bool,
 ) -> Vec<String> {
     let mut summary = Vec::new();
     if exit_code == 0 {
-        if marker_hits > 0 {
+        if warning_detected {
             summary.push("command completed with warnings".to_string());
             summary.push(format!("matched {marker_hits} {} markers", rule.id));
+        } else {
+            summary.push("command completed successfully".to_string());
+        }
+        if marker_hits > 0 {
             if let Some(line) = find_last_line_with_any(lines, rule.summary_markers) {
                 summary.push(line.trim().to_string());
             }
-        } else {
-            summary.push("command completed successfully".to_string());
         }
         return summary;
     }
@@ -169,7 +181,23 @@ fn build_excerpt(
         return Vec::new();
     }
 
-    if exit_code == 0 && marker_hits == 0 {
+    if exit_code == 0 {
+        if marker_hits == 0 {
+            return Vec::new();
+        }
+        if rule.warn_on_success || !rule.excerpt_start.is_empty() {
+            let start = find_first_line_with_any(lines, rule.excerpt_start)
+                .or_else(|| find_first_line_with_any(lines, rule.markers));
+
+            if let Some(start_idx) = start {
+                let end = find_end_index(lines, start_idx, rule.excerpt_end)
+                    .unwrap_or_else(|| usize::min(start_idx + 120, lines.len()));
+                return lines[start_idx..end]
+                    .iter()
+                    .map(|s| (*s).to_string())
+                    .collect();
+            }
+        }
         return Vec::new();
     }
 
@@ -288,6 +316,7 @@ fn tool_rules() -> &'static [ToolRule] {
             excerpt_start: &["failures"],
             excerpt_end: &["short test summary info", "===="],
             base_confidence: 68,
+            warn_on_success: false,
         },
         ToolRule {
             id: "jest",
@@ -298,6 +327,7 @@ fn tool_rules() -> &'static [ToolRule] {
             excerpt_start: &["fail "],
             excerpt_end: &["test suites:"],
             base_confidence: 68,
+            warn_on_success: false,
         },
         ToolRule {
             id: "vitest",
@@ -308,6 +338,22 @@ fn tool_rules() -> &'static [ToolRule] {
             excerpt_start: &["failed tests", "error"],
             excerpt_end: &["test files", "duration"],
             base_confidence: 64,
+            warn_on_success: false,
+        },
+        ToolRule {
+            id: "coverage",
+            tool: Some("coverage"),
+            commands: &[],
+            markers: &[
+                "% coverage report from v8",
+                "coverage summary",
+                "all files          |",
+            ],
+            summary_markers: &["all files          |", "test files", "tests  "],
+            excerpt_start: &["test files", "% coverage report from v8", "coverage summary"],
+            excerpt_end: &[],
+            base_confidence: 76,
+            warn_on_success: false,
         },
         ToolRule {
             id: "cargo",
@@ -318,6 +364,7 @@ fn tool_rules() -> &'static [ToolRule] {
             excerpt_start: &["error:", "failures:"],
             excerpt_end: &["test result:", "error: could not compile"],
             base_confidence: 62,
+            warn_on_success: false,
         },
         ToolRule {
             id: "go",
@@ -328,6 +375,7 @@ fn tool_rules() -> &'static [ToolRule] {
             excerpt_start: &["--- fail:", "panic:"],
             excerpt_end: &["fail\t", "exit status"],
             base_confidence: 62,
+            warn_on_success: false,
         },
         ToolRule {
             id: "tsc",
@@ -338,6 +386,7 @@ fn tool_rules() -> &'static [ToolRule] {
             excerpt_start: &["error ts"],
             excerpt_end: &["found", "errors"],
             base_confidence: 60,
+            warn_on_success: false,
         },
         ToolRule {
             id: "eslint",
@@ -348,6 +397,7 @@ fn tool_rules() -> &'static [ToolRule] {
             excerpt_start: &["error", "warning"],
             excerpt_end: &["problems (", "✖"],
             base_confidence: 58,
+            warn_on_success: true,
         },
         ToolRule {
             id: "ruff",
@@ -358,6 +408,7 @@ fn tool_rules() -> &'static [ToolRule] {
             excerpt_start: &["error", "found"],
             excerpt_end: &["found", "would fix"],
             base_confidence: 58,
+            warn_on_success: true,
         },
         ToolRule {
             id: "mypy",
@@ -368,6 +419,7 @@ fn tool_rules() -> &'static [ToolRule] {
             excerpt_start: &[": error:"],
             excerpt_end: &["found", "error in"],
             base_confidence: 58,
+            warn_on_success: false,
         },
         ToolRule {
             id: "maven",
@@ -378,6 +430,7 @@ fn tool_rules() -> &'static [ToolRule] {
             excerpt_start: &["[error]"],
             excerpt_end: &["[help", "[info]"],
             base_confidence: 66,
+            warn_on_success: false,
         },
         ToolRule {
             id: "gradle",
@@ -392,6 +445,7 @@ fn tool_rules() -> &'static [ToolRule] {
             excerpt_start: &["failure: build failed with an exception", "what went wrong"],
             excerpt_end: &["* try:", "build failed"],
             base_confidence: 66,
+            warn_on_success: false,
         },
         ToolRule {
             id: "dotnet",
@@ -402,6 +456,7 @@ fn tool_rules() -> &'static [ToolRule] {
             excerpt_start: &["error cs", "failed!", "test run failed"],
             excerpt_end: &["build failed", "total tests:"],
             base_confidence: 62,
+            warn_on_success: false,
         },
         ToolRule {
             id: "cmake",
@@ -416,6 +471,7 @@ fn tool_rules() -> &'static [ToolRule] {
             excerpt_start: &["cmake error", "the following tests failed:"],
             excerpt_end: &["-- configuring incomplete", "errors occurred"],
             base_confidence: 56,
+            warn_on_success: false,
         },
         ToolRule {
             id: "terraform",
@@ -426,6 +482,7 @@ fn tool_rules() -> &'static [ToolRule] {
             excerpt_start: &["error:"],
             excerpt_end: &["terraform used", "╵", "exit status"],
             base_confidence: 56,
+            warn_on_success: false,
         },
         ToolRule {
             id: "docker",
@@ -436,6 +493,7 @@ fn tool_rules() -> &'static [ToolRule] {
             excerpt_start: &["error", "failed to"],
             excerpt_end: &["executor failed", "service"],
             base_confidence: 55,
+            warn_on_success: false,
         },
         ToolRule {
             id: "kubectl",
@@ -446,6 +504,7 @@ fn tool_rules() -> &'static [ToolRule] {
             excerpt_start: &["error from server", "unable to", "forbidden"],
             excerpt_end: &[],
             base_confidence: 55,
+            warn_on_success: false,
         },
         ToolRule {
             id: "generic",
@@ -471,6 +530,7 @@ fn tool_rules() -> &'static [ToolRule] {
             ],
             excerpt_end: &[],
             base_confidence: 30,
+            warn_on_success: false,
         },
     ]
 }
@@ -583,6 +643,36 @@ mod tests {
                 .as_ref()
                 .is_some_and(|e| e.contains("warning"))
         );
+    }
+
+    #[test]
+    fn coverage_success_from_wrapped_npm_command_extracts_report() {
+        let text = read_fixture("vitest_coverage_success.log");
+        let enabled = tool_rules()
+            .iter()
+            .map(|r| r.id.to_string())
+            .collect::<Vec<_>>();
+        let command_vec = vec![
+            "npm".to_string(),
+            "run".to_string(),
+            "test:coverage".to_string(),
+        ];
+        let result = analyze_text(&text, 0, &enabled, &command_vec);
+
+        let detector_line = result
+            .summary_lines
+            .iter()
+            .find(|line| line.starts_with("detector: "))
+            .cloned()
+            .unwrap_or_default();
+
+        assert_eq!(detector_line, "detector: coverage");
+        assert!(!result.warning_detected);
+        assert!(result.success_highlight_detected);
+        let excerpt = result.excerpt.unwrap_or_default();
+        assert!(excerpt.contains("Test Files  6 passed (6)"));
+        assert!(excerpt.contains("% Coverage report from v8"));
+        assert!(excerpt.contains("All files"));
     }
 
     fn read_fixture(name: &str) -> String {
