@@ -77,10 +77,15 @@ pub fn run(args: &Cli) -> Result<i32, String> {
         analysis.warning_detected,
         effective_policy.show_warnings_on_success,
     );
+    let should_show_success_highlight = should_show_success_highlight(
+        command_outcome.success,
+        analysis.success_highlight_detected,
+    );
     let excerpt = if should_write_relevant_excerpt(
         command_outcome.success,
         effective_policy.excerpt_on_success,
         should_show_warning_excerpt,
+        should_show_success_highlight,
     ) {
         let detected = analysis.excerpt.unwrap_or_else(|| {
             if command_outcome.success {
@@ -144,7 +149,9 @@ pub fn run(args: &Cli) -> Result<i32, String> {
         max_excerpt_lines: effective_policy.max_excerpt_lines,
         max_digest_lines: effective_policy.max_digest_lines,
         show_log_path: effective_policy.show_log_path && has_log_output,
-        show_excerpt_on_success: effective_policy.excerpt_on_success || should_show_warning_excerpt,
+        show_excerpt_on_success: effective_policy.excerpt_on_success
+            || should_show_warning_excerpt
+            || should_show_success_highlight,
     });
 
     Ok(command_outcome.exit_code)
@@ -162,8 +169,13 @@ fn should_write_relevant_excerpt(
     success: bool,
     excerpt_on_success: bool,
     warning_excerpt_on_success: bool,
+    success_highlight_on_success: bool,
 ) -> bool {
-    !success || excerpt_on_success || warning_excerpt_on_success
+    !success || excerpt_on_success || warning_excerpt_on_success || success_highlight_on_success
+}
+
+fn should_show_success_highlight(success: bool, success_highlight_detected: bool) -> bool {
+    success && success_highlight_detected
 }
 
 fn format_time(ts: OffsetDateTime) -> String {
@@ -254,10 +266,18 @@ mod tests {
 
     #[test]
     fn relevant_excerpt_write_conditions_match_policy() {
-        assert!(should_write_relevant_excerpt(false, false, false));
-        assert!(should_write_relevant_excerpt(true, true, false));
-        assert!(should_write_relevant_excerpt(true, false, true));
-        assert!(!should_write_relevant_excerpt(true, false, false));
+        assert!(should_write_relevant_excerpt(false, false, false, false));
+        assert!(should_write_relevant_excerpt(true, true, false, false));
+        assert!(should_write_relevant_excerpt(true, false, true, false));
+        assert!(should_write_relevant_excerpt(true, false, false, true));
+        assert!(!should_write_relevant_excerpt(true, false, false, false));
+    }
+
+    #[test]
+    fn success_highlight_only_on_success() {
+        assert!(should_show_success_highlight(true, true));
+        assert!(!should_show_success_highlight(false, true));
+        assert!(!should_show_success_highlight(true, false));
     }
 
     #[test]

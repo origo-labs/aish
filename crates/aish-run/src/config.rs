@@ -166,6 +166,7 @@ impl AppConfig {
                     "pytest".to_string(),
                     "jest".to_string(),
                     "vitest".to_string(),
+                    "coverage".to_string(),
                     "cargo".to_string(),
                     "go".to_string(),
                     "tsc".to_string(),
