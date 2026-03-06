@@ -65,10 +65,12 @@ fn analyze_text(
 ) -> AnalysisResult {
     let lines: Vec<&str> = text.lines().collect();
     let cmd_name = command_basename(command).to_ascii_lowercase();
+    let coverage_command = command_looks_like_coverage(command);
 
     let mut best: Option<RuleResult> = None;
     for &rule in tool_rules() {
-        if !detector_enabled(rule.id, enabled_detectors) {
+        if !detector_enabled(rule.id, enabled_detectors) && !(coverage_command && rule.id == "coverage")
+        {
             continue;
         }
         let result = evaluate_rule(rule, &cmd_name, &lines, exit_code);
@@ -105,12 +107,21 @@ fn analyze_text(
 fn evaluate_rule(rule: ToolRule, cmd_name: &str, lines: &[&str], exit_code: i32) -> RuleResult {
     let command_match = matches_command(rule.commands, cmd_name);
     let marker_hits = count_marker_hits(lines, rule.markers);
+    let is_coverage = rule.id == "coverage";
+    let has_coverage_header = is_coverage
+        && has_any_marker(
+            lines,
+            &["% coverage report from v8", "coverage report from", "coverage summary"],
+        );
 
     let mut confidence: i32 = i32::from(rule.base_confidence);
     if command_match {
         confidence += 20;
     }
     confidence += (marker_hits.min(6) as i32) * 6;
+    if has_coverage_header && exit_code == 0 {
+        confidence += 20;
+    }
     if exit_code == 0 {
         confidence -= 20;
     }
@@ -179,6 +190,22 @@ fn build_excerpt(
 ) -> Vec<String> {
     if lines.is_empty() {
         return Vec::new();
+    }
+
+    if rule.id == "coverage" && exit_code == 0 && marker_hits > 0 {
+        let coverage_markers = &[
+            "% coverage report from v8",
+            "coverage report from",
+            "coverage summary",
+        ];
+        if let Some(coverage_idx) = find_last_line_with_any_index(lines, coverage_markers) {
+            let start_idx = coverage_idx.saturating_sub(6);
+            let end_idx = usize::min(coverage_idx + 120, lines.len());
+            return lines[start_idx..end_idx]
+                .iter()
+                .map(|s| (*s).to_string())
+                .collect();
+        }
     }
 
     if exit_code == 0 {
@@ -286,9 +313,31 @@ fn find_last_line_with_any(lines: &[&str], markers: &[&str]) -> Option<String> {
         .map(|line| (*line).to_string())
 }
 
+fn find_last_line_with_any_index(lines: &[&str], markers: &[&str]) -> Option<usize> {
+    if markers.is_empty() {
+        return None;
+    }
+    lines.iter().rposition(|line| contains_any(line, markers))
+}
+
+fn has_any_marker(lines: &[&str], markers: &[&str]) -> bool {
+    lines.iter().any(|line| contains_any(line, markers))
+}
+
 fn contains_any(line: &str, markers: &[&str]) -> bool {
     let lower = line.to_ascii_lowercase();
     markers.iter().any(|marker| lower.contains(marker))
+}
+
+fn command_looks_like_coverage(command: &[String]) -> bool {
+    command.iter().any(|arg| {
+        let lower = arg.to_ascii_lowercase();
+        lower.contains("coverage")
+            || lower == "-c"
+            || lower == "--cov"
+            || lower == "--coverage"
+            || lower.starts_with("--cov=")
+    })
 }
 
 fn command_basename(command: &[String]) -> &str {
@@ -333,7 +382,7 @@ fn tool_rules() -> &'static [ToolRule] {
             id: "vitest",
             tool: Some("vitest"),
             commands: &["vitest"],
-            markers: &["failed tests", "test files", "vitest"],
+            markers: &["failed tests", "vitest"],
             summary_markers: &["failed", "passed", "test files"],
             excerpt_start: &["failed tests", "error"],
             excerpt_end: &["test files", "duration"],
@@ -673,6 +722,57 @@ mod tests {
         assert!(excerpt.contains("Test Files  6 passed (6)"));
         assert!(excerpt.contains("% Coverage report from v8"));
         assert!(excerpt.contains("All files"));
+    }
+
+    #[test]
+    fn coverage_detection_works_even_when_user_list_omits_coverage_rule() {
+        let text = read_fixture("vitest_coverage_progress_success.log");
+        let enabled = vec![
+            "generic".to_string(),
+            "pytest".to_string(),
+            "jest".to_string(),
+            "vitest".to_string(),
+        ];
+        let command_vec = vec![
+            "npm".to_string(),
+            "run".to_string(),
+            "test:coverage".to_string(),
+        ];
+
+        let result = analyze_text(&text, 0, &enabled, &command_vec);
+        let detector_line = result
+            .summary_lines
+            .iter()
+            .find(|line| line.starts_with("detector: "))
+            .cloned()
+            .unwrap_or_default();
+
+        assert_eq!(detector_line, "detector: coverage");
+        assert!(result.success_highlight_detected);
+        let excerpt = result.excerpt.unwrap_or_default();
+        assert!(excerpt.contains("% Coverage report from v8"));
+        assert!(excerpt.contains("All files"));
+    }
+
+    #[test]
+    fn coverage_command_detection_matches_common_args() {
+        assert!(command_looks_like_coverage(&[
+            "npm".to_string(),
+            "run".to_string(),
+            "test:coverage".to_string()
+        ]));
+        assert!(command_looks_like_coverage(&[
+            "pytest".to_string(),
+            "--cov".to_string()
+        ]));
+        assert!(command_looks_like_coverage(&[
+            "vitest".to_string(),
+            "--coverage".to_string()
+        ]));
+        assert!(!command_looks_like_coverage(&[
+            "npm".to_string(),
+            "test".to_string()
+        ]));
     }
 
     fn read_fixture(name: &str) -> String {
