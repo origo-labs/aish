@@ -45,13 +45,13 @@ pub fn render_summary(ctx: RenderContext<'_>) {
         ShowMode::Quiet => {}
         ShowMode::Full => {
             if ctx.show_log_path {
-                println!("full log: {}", ctx.log_path.display());
+                println!("Read the full log: {}", ctx.log_path.display());
             }
         }
         ShowMode::Digest => {
             println!("\n{digest}");
             if ctx.show_log_path {
-                println!("full log: {}", ctx.log_path.display());
+                println!("Read the full log: {}", ctx.log_path.display());
             }
         }
         ShowMode::Excerpt => {
@@ -65,7 +65,7 @@ pub fn render_summary(ctx: RenderContext<'_>) {
                 println!("\n{digest}");
             }
             if ctx.show_log_path {
-                println!("full log: {}", ctx.log_path.display());
+                println!("Read full log: {}", ctx.log_path.display());
             }
         }
         ShowMode::Auto => {
