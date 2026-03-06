@@ -51,6 +51,8 @@ pub fn run(args: &Cli) -> Result<i32, String> {
         pty::run_in_pty(&args.command, &cwd, &run_paths.log_path, stream_output)
             .map_err(|e| format!("failed to run command in pty: {e}"))?
     };
+    let has_log_output = cleanup_empty_log(&run_paths.log_path)
+        .map_err(|e| format!("failed to clean up log file: {e}"))?;
 
     let ended = OffsetDateTime::now_utc();
     let duration_ms = (ended - started).whole_milliseconds();
@@ -141,7 +143,7 @@ pub fn run(args: &Cli) -> Result<i32, String> {
         log_path: &run_paths.log_path,
         max_excerpt_lines: effective_policy.max_excerpt_lines,
         max_digest_lines: effective_policy.max_digest_lines,
-        show_log_path: effective_policy.show_log_path,
+        show_log_path: effective_policy.show_log_path && has_log_output,
         show_excerpt_on_success: effective_policy.excerpt_on_success || should_show_warning_excerpt,
     });
 
@@ -167,6 +169,21 @@ fn should_write_relevant_excerpt(
 fn format_time(ts: OffsetDateTime) -> String {
     ts.format(&time::format_description::well_known::Rfc3339)
         .unwrap_or_else(|_| "unknown-time".to_string())
+}
+
+fn cleanup_empty_log(log_path: &std::path::Path) -> std::io::Result<bool> {
+    let metadata = match fs::metadata(log_path) {
+        Ok(metadata) => metadata,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(err) => return Err(err),
+    };
+
+    if metadata.len() == 0 {
+        fs::remove_file(log_path)?;
+        return Ok(false);
+    }
+
+    Ok(true)
 }
 
 pub fn show_last(cfg: &config::AppConfig) -> Result<i32, String> {
@@ -225,6 +242,7 @@ fn resolve_last_run_dir(cfg: &config::AppConfig) -> Result<PathBuf, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
 
     #[test]
     fn warning_excerpt_only_when_all_conditions_match() {
@@ -240,5 +258,42 @@ mod tests {
         assert!(should_write_relevant_excerpt(true, true, false));
         assert!(should_write_relevant_excerpt(true, false, true));
         assert!(!should_write_relevant_excerpt(true, false, false));
+    }
+
+    #[test]
+    fn cleanup_empty_log_removes_zero_byte_file() {
+        let path = unique_temp_file("empty");
+        fs::write(&path, "").expect("failed to create empty temp log");
+
+        assert!(
+            !cleanup_empty_log(&path).expect("cleanup failed for empty log"),
+            "expected no retained log output for empty file"
+        );
+        assert!(
+            !path.exists(),
+            "expected empty log file to be removed from disk"
+        );
+    }
+
+    #[test]
+    fn cleanup_empty_log_keeps_non_empty_file() {
+        let path = unique_temp_file("nonempty");
+        fs::write(&path, "hello").expect("failed to create non-empty temp log");
+
+        assert!(
+            cleanup_empty_log(&path).expect("cleanup failed for non-empty log"),
+            "expected non-empty log to be retained"
+        );
+        assert!(path.exists(), "expected non-empty log file to remain");
+
+        fs::remove_file(path).expect("failed to remove non-empty temp log");
+    }
+
+    fn unique_temp_file(suffix: &str) -> std::path::PathBuf {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system clock before unix epoch")
+            .as_nanos();
+        std::env::temp_dir().join(format!("aish-runner-{suffix}-{nanos}.log"))
     }
 }
